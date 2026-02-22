@@ -11,7 +11,6 @@ import signal
 import sys
 
 from kucoin_bot.config import load_config, BotConfig
-from kucoin_bot.models import init_db, SignalSnapshot
 from kucoin_bot.api.client import KuCoinClient
 from kucoin_bot.services.market_data import MarketDataService
 from kucoin_bot.services.signal_engine import SignalEngine
@@ -64,6 +63,7 @@ def _build_strategies() -> list[BaseStrategy]:
 
 async def run_live(cfg: BotConfig) -> None:
     """Main live trading loop (also handles PAPER and SHADOW modes)."""
+    from kucoin_bot.models import init_db, SignalSnapshot  # requires sqlalchemy
     print(DISCLAIMER)
 
     is_paper = cfg.is_paper
