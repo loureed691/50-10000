@@ -109,3 +109,70 @@ class TestPortfolioManager:
         pm = PortfolioManager(client=client, risk_mgr=risk_mgr, allow_transfers=True)
         result = await pm.transfer_if_needed("USDT", "unknown", "trade", 100)
         assert result is None
+
+
+class TestPaperMode:
+    """Verify PAPER mode never calls the real order API."""
+
+    @pytest.mark.asyncio
+    async def test_paper_mode_does_not_call_place_order(self, monkeypatch):
+        """In PAPER mode run_live() must NOT call client.place_order for entries."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from kucoin_bot.config import BotConfig, RiskConfig
+        from kucoin_bot.api.client import KuCoinClient
+        from kucoin_bot.services.market_data import MarketDataService, MarketInfo
+        from kucoin_bot.services.signal_engine import SignalScores, Regime
+        from kucoin_bot.__main__ import run_live
+
+        cfg = BotConfig(
+            mode="PAPER",
+            api_key="k", api_secret="s", api_passphrase="p",
+            risk=RiskConfig(),
+        )
+
+        # Build a mock client that records place_order calls
+        mock_client = MagicMock(spec=KuCoinClient)
+        mock_client.start = AsyncMock()
+        mock_client.close = AsyncMock()
+        mock_client.get_account_balance = AsyncMock(return_value=10_000.0)
+        mock_client.place_order = AsyncMock(return_value={"code": "200000", "data": {"orderId": "real-order"}})
+        mock_client.get_open_orders = AsyncMock(return_value=[])
+
+        mock_market = MarketInfo(
+            symbol="BTC-USDT", base="BTC", quote="USDT",
+            last_price=30_000.0, spread_bps=5.0,
+            base_min_size=0.0001, base_increment=0.0001, price_increment=0.01,
+        )
+
+        # KuCoin kline format: [time, open, close, high, low, volume, quote_volume]
+        mock_klines = [
+            [i, "30000", "30000", "30100", "29900", "100", "3000000"]
+            for i in range(200)
+        ]
+        mock_mds = MagicMock(spec=MarketDataService)
+        mock_mds.refresh_universe = AsyncMock()
+        mock_mds.get_symbols = MagicMock(return_value=["BTC-USDT"])
+        mock_mds.get_klines = AsyncMock(return_value=mock_klines)
+        mock_mds.get_info = MagicMock(return_value=mock_market)
+
+        # Use a simple context manager mock for init_db
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session_factory = MagicMock(return_value=mock_session)
+
+        async def fake_sleep(_: float) -> None:
+            raise asyncio.CancelledError()
+
+        with patch("kucoin_bot.__main__.KuCoinClient", return_value=mock_client), \
+             patch("kucoin_bot.__main__.MarketDataService", return_value=mock_mds), \
+             patch("asyncio.sleep", side_effect=fake_sleep), \
+             patch("kucoin_bot.__main__.init_db", return_value=mock_session_factory):
+            try:
+                await run_live(cfg)
+            except asyncio.CancelledError:
+                pass
+
+        # PAPER mode must never call the real exchange order API
+        mock_client.place_order.assert_not_called()

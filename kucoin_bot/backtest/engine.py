@@ -22,6 +22,10 @@ DEFAULT_TAKER_FEE = 0.001
 DEFAULT_SLIPPAGE_BPS = 5  # 0.05%
 DEFAULT_FILL_RATE = 0.95  # 95% fill probability for limit orders
 
+# Latency slippage scaling: each extra second of latency adds this fraction of
+# one slippage_bps unit as additional adverse drift during order transit time.
+LATENCY_DRIFT_FACTOR = 0.1
+
 
 @dataclass
 class BacktestTrade:
@@ -131,11 +135,12 @@ class BacktestEngine:
         _pending_entry: Optional[Tuple[StrategyDecision, SignalScores]] = None
         _pending_exit: bool = False
 
-        # Effective slippage including latency impact.
-        # Rationale: each additional second of latency allows price to drift ~10% of one
-        # slippage unit (0.1 × slippage_bps), giving a conservative estimate of the
-        # extra adverse move during order transit time.
-        effective_slippage_bps = self.slippage_bps + (self.latency_ms / 1000.0) * self.slippage_bps * 0.1
+        # Effective slippage for fills, including latency impact.
+        # Rationale: each additional second of latency allows price to drift
+        # LATENCY_DRIFT_FACTOR × slippage_bps, giving a conservative estimate of
+        # the extra adverse move during order transit time.  This only affects
+        # actual fill prices; the EV gate uses the base slippage for parity with live.
+        effective_slippage_bps = self.slippage_bps + (self.latency_ms / 1000.0) * self.slippage_bps * LATENCY_DRIFT_FACTOR
 
         for i in range(warmup, len(klines)):
             bar = klines[i]
@@ -229,8 +234,9 @@ class BacktestEngine:
                 fee_rate = (
                     self.taker_fee if decision.order_type == "market" else self.maker_fee
                 )
-                # Round-trip cost in basis points
-                cost_bps = (fee_rate * 2) * 10_000 + effective_slippage_bps * 2 + min_ev_bps
+                # Round-trip cost uses base slippage_bps (not latency-adjusted) to stay
+                # consistent with the live EV gate, which also uses the base DEFAULT_SLIPPAGE_BPS.
+                cost_bps = (fee_rate * 2) * 10_000 + self.slippage_bps * 2 + min_ev_bps
                 # Expected move proxy: ATR-scaled (volatility * 100 = ATR in bps) × confidence
                 expected_bps = signals.volatility * 100.0 * signals.confidence
                 if expected_bps < cost_bps:
@@ -284,6 +290,11 @@ class BacktestEngine:
         the window immediately following the first window (which acts as
         warm-up), sliding forward one window at a time.
 
+        warmup=0 is passed to run() because each test slice is already out-of-sample
+        data; consuming warmup bars within the slice would discard valid test bars
+        in small folds.  The signal engine lookback is still respected inside run()
+        via the rolling window slicing.
+
         Returns a list of BacktestResult, one per fold.
         """
         n = len(klines)
@@ -295,7 +306,11 @@ class BacktestEngine:
             test_klines = klines[test_start:test_end]
             min_required = self.signal_engine.lookback + 10
             if len(test_klines) > min_required:
-                result = self.run(test_klines, symbol, initial_equity=initial_equity)
+                # warmup=0: this slice is already OOS; no need to discard bars
+                # for indicator warm-up within the slice itself.
+                result = self.run(
+                    test_klines, symbol, initial_equity=initial_equity, warmup=0
+                )
                 results.append(result)
         logger.info("Walk-forward complete: %d/%d folds evaluated", len(results), n_splits)
         return results

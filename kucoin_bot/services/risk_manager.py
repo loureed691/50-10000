@@ -82,10 +82,14 @@ class RiskManager:
             return True
         return False
 
-    def check_correlated_exposure(self, symbols: List[str]) -> bool:
+    def check_correlated_exposure(self, symbols: List[str], prospective_notional: float = 0.0) -> bool:
         """Returns True if total exposure for the given correlated symbol group exceeds limit.
 
         Pass a list of symbols sharing the same base asset (e.g. all BTC pairs).
+        ``prospective_notional`` (USD) can be provided to include a pending entry
+        that is not yet recorded in ``self.positions``, preventing the same-cycle
+        bypass where multiple correlated entries could all pass the check before
+        any fill updates positions.
         """
         if self.current_equity <= 0:
             return False
@@ -93,7 +97,7 @@ class RiskManager:
             abs(p.size * p.current_price * p.leverage)
             for sym, p in self.positions.items()
             if sym in symbols
-        )
+        ) + prospective_notional
         exposure_pct = total / self.current_equity * 100
         return exposure_pct >= self.config.max_correlated_exposure_pct
 
