@@ -200,3 +200,42 @@ class TestModeResolutionIntegration:
             main()
         assert exc_info.value.code == 1
 
+    def test_live_mode_unexpected_exception_exits_nonzero(self, monkeypatch, tmp_path):
+        """LIVE mode with LIVE_TRADING=true but non-RuntimeError exception → exit(1)."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("BOT_MODE", "LIVE")
+        monkeypatch.setenv("LIVE_TRADING", "true")
+        monkeypatch.setenv("KUCOIN_API_KEY", "key")
+        monkeypatch.setenv("KUCOIN_API_SECRET", "secret")
+        monkeypatch.setenv("KUCOIN_API_PASSPHRASE", "passphrase")
+        monkeypatch.setattr(sys, "argv", ["kucoin-bot"])
+
+        async def _raise_value_error(cfg):
+            raise ValueError("simulated unexpected error")
+
+        from kucoin_bot import __main__ as main_module
+        monkeypatch.setattr(main_module, "run_live", _raise_value_error)
+
+        with pytest.raises(SystemExit) as exc_info:
+            main_module.main()
+        assert exc_info.value.code == 1
+
+    def test_paper_mode_unexpected_exception_exits_nonzero(self, monkeypatch, tmp_path):
+        """PAPER mode non-RuntimeError exception → exit(1) (no raw traceback)."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("BOT_MODE", "PAPER")
+        monkeypatch.setenv("KUCOIN_API_KEY", "key")
+        monkeypatch.setenv("KUCOIN_API_SECRET", "secret")
+        monkeypatch.setenv("KUCOIN_API_PASSPHRASE", "passphrase")
+        monkeypatch.setattr(sys, "argv", ["kucoin-bot"])
+
+        async def _raise_connection_error(cfg):
+            raise ConnectionError("simulated network failure")
+
+        from kucoin_bot import __main__ as main_module
+        monkeypatch.setattr(main_module, "run_live", _raise_connection_error)
+
+        with pytest.raises(SystemExit) as exc_info:
+            main_module.main()
+        assert exc_info.value.code == 1
+
