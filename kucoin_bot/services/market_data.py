@@ -12,9 +12,6 @@ from kucoin_bot.api.client import KuCoinClient
 
 logger = logging.getLogger(__name__)
 
-# Minimum 24h volume in USDT for a pair to be eligible
-MIN_24H_VOLUME_USDT = 50_000.0
-MIN_SPREAD_BPS = 0  # no min
 MAX_SPREAD_BPS = 100  # 1 %
 
 

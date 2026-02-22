@@ -127,14 +127,15 @@ class ExecutionEngine:
                 logger.error("Failed to cancel order %s", o.get("id"), exc_info=True)
         return cancelled
 
-    async def flatten_position(self, symbol: str, current_size: float, side: str) -> OrderResult:
+    async def flatten_position(self, symbol: str, current_size: float, current_price: float, side: str) -> OrderResult:
         """Close a position by placing an opposite market order."""
         close_side = "sell" if side == "long" else "buy"
+        notional = abs(current_size * current_price)
         return await self.execute(
             OrderRequest(
                 symbol=symbol,
                 side=close_side,
-                notional=0,  # we'll handle size directly
+                notional=notional,
                 order_type="market",
                 reason="flatten_position",
             )

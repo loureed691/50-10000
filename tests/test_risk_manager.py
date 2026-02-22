@@ -81,6 +81,16 @@ class TestRiskManager:
         rm = self._make_risk_mgr(10_000)
         rm.daily_pnl = -500
         rm.circuit_breaker_active = True
+        # Drawdown is 0% (peak == current), so CB should reset
         rm.reset_daily()
         assert rm.daily_pnl == 0.0
-        # CB stays active if drawdown is still breached
+        assert rm.circuit_breaker_active is False
+
+    def test_daily_reset_cb_stays_on_drawdown(self):
+        rm = self._make_risk_mgr(10_000)
+        rm.daily_pnl = -500
+        rm.circuit_breaker_active = True
+        rm.current_equity = 8_000  # 20% drawdown
+        rm.reset_daily()
+        assert rm.daily_pnl == 0.0
+        assert rm.circuit_breaker_active is True
