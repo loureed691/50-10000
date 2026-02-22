@@ -70,7 +70,7 @@ async def run_live(cfg: BotConfig) -> None:
     is_shadow = cfg.is_shadow
     mode_label = cfg.mode.upper()
 
-    if not cfg.api_key or not cfg.api_secret:
+    if not cfg.api_key or not cfg.api_secret or not cfg.api_passphrase:
         raise RuntimeError(
             "API credentials missing. "
             "Set KUCOIN_API_KEY, KUCOIN_API_SECRET, and KUCOIN_API_PASSPHRASE "
@@ -500,13 +500,13 @@ def main() -> None:
         try:
             asyncio.run(run_live(cfg))
         except RuntimeError as exc:
-            print(f"ERROR: {exc}")
+            print(f"ERROR: {exc}", file=sys.stderr)
             sys.exit(1)
     elif cfg.mode.upper() in ("PAPER", "SHADOW"):
         try:
             asyncio.run(run_live(cfg))
         except RuntimeError as exc:
-            print(f"ERROR: {exc}")
+            print(f"ERROR: {exc}", file=sys.stderr)
             sys.exit(1)
     else:
         print(f"Unknown mode: {cfg.mode}. Use LIVE, PAPER, SHADOW, or BACKTEST.")

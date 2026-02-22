@@ -195,11 +195,22 @@ def load_config(cli_mode: Optional[str] = None) -> BotConfig:
 
     # Step 2: resolve mode with explicit source logging
     mode_val, mode_source = resolve_mode(cli_mode, dict(os.environ), yaml_data.get("mode"))
-    logger.info("Mode resolved: %s (source: %s)", mode_val.value, mode_source)
+    # Log at WARNING so it appears before _setup_logging() configures the level
+    logger.warning("Mode resolved: %s (source: %s)", mode_val.value, mode_source)
 
     # Step 3: env vars take precedence over YAML for scalar settings
     def _env_or_yaml(env_key: str, yaml_key: str, default: str) -> str:
-        return os.getenv(env_key) or str(yaml_data.get(yaml_key, default))
+        env_val = os.getenv(env_key)
+        if env_val is not None and env_val != "":
+            return env_val
+        yaml_val = yaml_data.get(yaml_key, default)
+        # Treat explicit null/None or blank strings in YAML as missing
+        if yaml_key in yaml_data:
+            if yaml_val is None:
+                yaml_val = default
+            elif isinstance(yaml_val, str) and yaml_val.strip() == "":
+                yaml_val = default
+        return str(yaml_val)
 
     def _bool_env(env_key: str, default: str = "false") -> bool:
         raw = os.getenv(env_key, default)
