@@ -65,6 +65,33 @@ class TestSignalEngine:
         assert scores.orderbook_imbalance > 0
         assert scores.funding_rate == pytest.approx(0.0005)
 
+    def test_orderbook_imbalance_equal_volumes(self, sample_klines):
+        engine = SignalEngine()
+        scores = engine.compute(
+            "BTC-USDT",
+            sample_klines,
+            orderbook={"bids": [["1", "10"]], "asks": [["1", "10"]]},
+        )
+        assert scores.orderbook_imbalance == pytest.approx(0.0)
+
+    def test_orderbook_imbalance_empty_orderbook(self, sample_klines):
+        engine = SignalEngine()
+        scores = engine.compute(
+            "BTC-USDT",
+            sample_klines,
+            orderbook={"bids": [], "asks": []},
+        )
+        assert scores.orderbook_imbalance == pytest.approx(0.0)
+
+    def test_orderbook_imbalance_malformed_levels(self, sample_klines):
+        engine = SignalEngine()
+        scores = engine.compute(
+            "BTC-USDT",
+            sample_klines,
+            orderbook={"bids": [["bad", "bad"]], "asks": [["bad", "bad"]]},
+        )
+        assert scores.orderbook_imbalance == pytest.approx(0.0)
+
     def test_news_spike_regime(self):
         engine = SignalEngine()
         klines = []
