@@ -13,6 +13,7 @@ from kucoin_bot.api.client import KuCoinClient
 logger = logging.getLogger(__name__)
 
 MAX_SPREAD_BPS = 100  # 1 %
+_KLINE_CACHE_TTL = 60.0  # seconds
 
 
 @dataclass
@@ -38,7 +39,7 @@ class MarketDataService:
 
     client: KuCoinClient
     universe: Dict[str, MarketInfo] = field(default_factory=dict)
-    _kline_cache: Dict[str, list] = field(default_factory=dict)
+    _kline_cache: Dict[str, tuple] = field(default_factory=dict)
     _refresh_interval: float = 300.0  # 5 min
 
     async def refresh_universe(self) -> None:
@@ -83,11 +84,19 @@ class MarketDataService:
         logger.info("Market universe: %d USDT pairs", len(self.universe))
 
     async def get_klines(self, symbol: str, kline_type: str = "1hour", bars: int = 200) -> List[list]:
-        """Fetch klines with caching."""
+        """Fetch klines with TTL-based caching to reduce API calls."""
         cache_key = f"{symbol}:{kline_type}"
-        now = int(time.time())
-        data = await self.client.get_klines(symbol, kline_type, start=now - bars * 3600, end=now)
-        self._kline_cache[cache_key] = data
+        now = time.time()
+
+        cached = self._kline_cache.get(cache_key)
+        if cached is not None:
+            data, ts = cached
+            if now - ts < _KLINE_CACHE_TTL:
+                return data
+
+        now_int = int(now)
+        data = await self.client.get_klines(symbol, kline_type, start=now_int - bars * 3600, end=now_int)
+        self._kline_cache[cache_key] = (data, now)
         return data
 
     def get_symbols(self) -> List[str]:

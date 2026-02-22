@@ -14,7 +14,7 @@ from kucoin_bot.models import init_db, SignalSnapshot
 from kucoin_bot.api.client import KuCoinClient
 from kucoin_bot.services.market_data import MarketDataService
 from kucoin_bot.services.signal_engine import SignalEngine
-from kucoin_bot.services.risk_manager import RiskManager
+from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
 from kucoin_bot.services.portfolio import PortfolioManager
 from kucoin_bot.services.execution import ExecutionEngine, OrderRequest
 from kucoin_bot.strategies.base import BaseStrategy
@@ -110,8 +110,21 @@ async def run_live(cfg: BotConfig) -> None:
     while not stop_event.is_set():
         # Check kill switch
         if cfg.kill_switch or os.getenv("KILL_SWITCH", "false").lower() == "true":
-            logger.critical("KILL SWITCH activated – cancelling all orders")
+            logger.critical("KILL SWITCH activated – cancelling all orders and flattening positions")
             await exec_engine.cancel_all()
+            for sym, pos in list(risk_mgr.positions.items()):
+                if pos.size > 0:
+                    close_price = pos.current_price or pos.entry_price
+                    if close_price <= 0:
+                        logger.error("No price for %s, cannot flatten", sym)
+                        continue
+                    try:
+                        await exec_engine.flatten_position(
+                            sym, pos.size, close_price, pos.side,
+                        )
+                        risk_mgr.update_position(sym, PositionInfo(symbol=sym, side=pos.side, size=0))
+                    except Exception:
+                        logger.error("Failed to flatten %s", sym, exc_info=True)
             break
 
         cycle += 1
@@ -179,7 +192,7 @@ async def run_live(cfg: BotConfig) -> None:
                         )
                         if notional > 0:
                             side = "buy" if "long" in decision.action else "sell"
-                            await exec_engine.execute(
+                            result = await exec_engine.execute(
                                 OrderRequest(
                                     symbol=sym,
                                     side=side,
@@ -191,10 +204,20 @@ async def run_live(cfg: BotConfig) -> None:
                                 ),
                                 market,
                             )
+                            if result.success and result.filled_qty > 0:
+                                pos_side = "long" if "long" in decision.action else "short"
+                                risk_mgr.update_position(sym, PositionInfo(
+                                    symbol=sym,
+                                    side=pos_side,
+                                    size=result.filled_qty,
+                                    entry_price=result.avg_price,
+                                    current_price=result.avg_price,
+                                    leverage=alloc.max_leverage,
+                                ))
                     elif decision.action == "exit":
                         if pos:
                             side = "sell" if pos.side == "long" else "buy"
-                            await exec_engine.execute(
+                            result = await exec_engine.execute(
                                 OrderRequest(
                                     symbol=sym,
                                     side=side,
@@ -204,6 +227,14 @@ async def run_live(cfg: BotConfig) -> None:
                                 ),
                                 market,
                             )
+                            if result.success:
+                                pnl = (result.avg_price - pos.entry_price) * pos.size
+                                if pos.side == "short":
+                                    pnl = -pnl
+                                risk_mgr.record_pnl(pnl)
+                                risk_mgr.update_position(sym, PositionInfo(
+                                    symbol=sym, side=pos.side, size=0,
+                                ))
 
                 except Exception:
                     logger.error("Error processing %s", sym, exc_info=True)

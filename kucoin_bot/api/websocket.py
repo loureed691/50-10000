@@ -27,11 +27,11 @@ class KuCoinWebSocket:
 
     async def start(self) -> None:
         """Obtain a WS token and connect."""
-        self._session = aiohttp.ClientSession()
         token_data = await self._get_public_token()
         if not token_data:
             logger.error("Failed to get WS token")
             return
+        self._session = aiohttp.ClientSession()
         endpoint = token_data["instanceServers"][0]["endpoint"]
         token = token_data["token"]
         self._ping_interval = token_data["instanceServers"][0].get("pingInterval", 30000) // 1000
@@ -42,10 +42,11 @@ class KuCoinWebSocket:
 
     async def _get_public_token(self) -> Optional[dict]:
         try:
-            async with aiohttp.ClientSession() as sess:
-                async with sess.post(f"{self._rest_url}/api/v1/bullet-public") as resp:
-                    data = await resp.json()
-                    return data.get("data")
+            if self._session is None:
+                self._session = aiohttp.ClientSession()
+            async with self._session.post(f"{self._rest_url}/api/v1/bullet-public") as resp:
+                data = await resp.json()
+                return data.get("data")
         except Exception:
             logger.error("WS token request failed", exc_info=True)
             return None

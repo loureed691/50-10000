@@ -12,6 +12,9 @@ from kucoin_bot.services.signal_engine import SignalScores
 
 logger = logging.getLogger(__name__)
 
+# Minimum notional fraction of one unit at current price
+_MIN_NOTIONAL_FACTOR = 1e-8
+
 
 @dataclass
 class PositionInfo:
@@ -97,6 +100,9 @@ class RiskManager:
         if self.circuit_breaker_active or self.current_equity <= 0:
             return 0.0
 
+        if price <= 0:
+            return 0.0
+
         # Per-position risk cap
         max_risk_usd = self.current_equity * (self.config.max_per_position_risk_pct / 100)
 
@@ -115,7 +121,13 @@ class RiskManager:
         max_total = self.current_equity * (self.config.max_total_exposure_pct / 100)
         remaining = max(0, max_total - existing_exposure)
 
-        return min(notional, remaining)
+        notional = min(notional, remaining)
+
+        # Skip if notional too small for one unit at current price
+        if notional < price * _MIN_NOTIONAL_FACTOR:
+            return 0.0
+
+        return notional
 
     def compute_leverage(self, signals: SignalScores, volatility: float) -> float:
         """Dynamic leverage: only when confidence high, vol low, drawdown low."""

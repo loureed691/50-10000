@@ -9,8 +9,9 @@ from typing import Dict, List, Optional, Type
 
 import numpy as np
 
+from kucoin_bot.config import RiskConfig
 from kucoin_bot.services.signal_engine import SignalEngine, SignalScores
-from kucoin_bot.services.risk_manager import RiskConfig, RiskManager, PositionInfo
+from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
 from kucoin_bot.strategies.base import BaseStrategy, StrategyDecision
 
 logger = logging.getLogger(__name__)
@@ -115,7 +116,7 @@ class BacktestEngine:
                 unrealized = (close - entry_price) * position_size
                 if position_side == "short":
                     unrealized = -unrealized
-                risk_mgr.update_equity(initial_equity + sum(t.pnl for t in trades) + unrealized)
+                risk_mgr.update_equity(equity + unrealized)
             else:
                 risk_mgr.update_equity(equity)
 
