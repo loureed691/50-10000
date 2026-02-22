@@ -160,7 +160,7 @@ class KuCoinClient:
                     if resp.status >= 400:
                         logger.error("HTTP %d: %s", resp.status, data)
                     return data
-            except aiohttp.ClientError as exc:
+            except (aiohttp.ClientError, ValueError) as exc:
                 logger.warning("Request error (attempt %d): %s", attempt, exc)
                 await _async_sleep(1)
         return {"code": "error", "msg": "max retries exceeded"}
