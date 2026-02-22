@@ -28,6 +28,7 @@ class OrderRequest:
     account_type: str = "trade"
     stop_price: Optional[float] = None
     reason: str = ""
+    reduce_only: bool = False  # set True for exit orders on futures
 
 
 @dataclass
@@ -91,15 +92,28 @@ class ExecutionEngine:
 
         for attempt in range(self.max_retries):
             try:
-                result = await self.client.place_order(
-                    symbol=req.symbol,
-                    side=req.side,
-                    order_type=order_type,
-                    size=size,
-                    price=price if order_type == "limit" else None,
-                    client_oid=client_oid,
-                    post_only=req.post_only,
-                )
+                # Route futures orders through the dedicated futures endpoint
+                if market and market.market_type == "futures":
+                    result = await self.client.place_futures_order(
+                        symbol=req.symbol,
+                        side=req.side,
+                        size=round(size),
+                        leverage=req.leverage,
+                        order_type=order_type,
+                        price=price if order_type == "limit" else None,
+                        client_oid=client_oid,
+                        reduce_only=req.reduce_only,
+                    )
+                else:
+                    result = await self.client.place_order(
+                        symbol=req.symbol,
+                        side=req.side,
+                        order_type=order_type,
+                        size=size,
+                        price=price if order_type == "limit" else None,
+                        client_oid=client_oid,
+                        post_only=req.post_only,
+                    )
                 if result.get("code") == "200000":
                     oid = result.get("data", {}).get("orderId", "")
                     logger.info(

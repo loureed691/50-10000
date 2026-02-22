@@ -16,6 +16,23 @@ _DEFAULT_CONFIG_PATH = Path("config.yaml")
 
 
 @dataclass
+class ShortConfig:
+    """Short-trading parameters."""
+
+    allow_shorts: bool = True
+    # Prefer USDT-margined futures for shorts; fall back to margin if unavailable
+    prefer_futures: bool = True
+    # Require futures/margin account for shorts (spot-only = no short)
+    require_futures_for_short: bool = True
+    # Estimated perpetual funding rate per 8-hour period (decimal, e.g. 0.0001 = 0.01 %)
+    funding_rate_per_8h: float = 0.0001
+    # Margin borrow rate per hour (decimal, e.g. 0.00003 = 0.003 %/hr)
+    borrow_rate_per_hour: float = 0.00003
+    # Expected holding period used in the EV gate cost estimate (hours)
+    expected_holding_hours: float = 24.0
+
+
+@dataclass
 class RiskConfig:
     """Portfolio-level risk parameters."""
 
@@ -65,6 +82,9 @@ class BotConfig:
     # Risk
     risk: RiskConfig = field(default_factory=RiskConfig)
 
+    # Short trading
+    short: ShortConfig = field(default_factory=ShortConfig)
+
     # Logging
     log_level: str = "INFO"
 
@@ -110,6 +130,14 @@ def load_config() -> BotConfig:
             min_ev_bps=float(os.getenv("MIN_EV_BPS", "10.0")),
             cooldown_bars=int(os.getenv("COOLDOWN_BARS", "5")),
         ),
+        short=ShortConfig(
+            allow_shorts=os.getenv("ALLOW_SHORTS", "true").lower() == "true",
+            prefer_futures=os.getenv("SHORT_PREFER_FUTURES", "true").lower() == "true",
+            require_futures_for_short=os.getenv("REQUIRE_FUTURES_FOR_SHORT", "true").lower() == "true",
+            funding_rate_per_8h=float(os.getenv("FUNDING_RATE_PER_8H", "0.0001")),
+            borrow_rate_per_hour=float(os.getenv("BORROW_RATE_PER_HOUR", "0.00003")),
+            expected_holding_hours=float(os.getenv("EXPECTED_HOLDING_HOURS", "24.0")),
+        ),
     )
 
     # Overlay YAML if present
@@ -147,6 +175,14 @@ def _generate_default_yaml() -> None:
             "max_correlated_exposure_pct": 30.0,
             "min_ev_bps": 10.0,
             "cooldown_bars": 5,
+        },
+        "short": {
+            "allow_shorts": True,
+            "prefer_futures": True,
+            "require_futures_for_short": True,
+            "funding_rate_per_8h": 0.0001,
+            "borrow_rate_per_hour": 0.00003,
+            "expected_holding_hours": 24.0,
         },
     }
     try:

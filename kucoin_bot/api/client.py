@@ -302,6 +302,7 @@ class KuCoinClient:
         order_type: str = "limit",
         price: Optional[float] = None,
         client_oid: Optional[str] = None,
+        reduce_only: bool = False,
     ) -> dict:
         import uuid
         body: Dict[str, Any] = {
@@ -314,6 +315,8 @@ class KuCoinClient:
         }
         if price is not None:
             body["price"] = str(price)
+        if reduce_only:
+            body["reduceOnly"] = True
         return await self._request("POST", "/api/v1/orders", body=body, base_url=self._futures_rest_url)
 
 
