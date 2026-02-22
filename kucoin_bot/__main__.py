@@ -17,6 +17,9 @@ from kucoin_bot.services.signal_engine import SignalEngine
 from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
 from kucoin_bot.services.portfolio import PortfolioManager
 from kucoin_bot.services.execution import ExecutionEngine, OrderRequest, OrderResult
+from kucoin_bot.services.cost_model import CostModel
+from kucoin_bot.services.side_selector import SideSelector
+from kucoin_bot.services.strategy_monitor import StrategyMonitor
 from kucoin_bot.strategies.base import BaseStrategy
 from kucoin_bot.strategies.trend import TrendFollowing
 from kucoin_bot.strategies.mean_reversion import MeanReversion
@@ -87,6 +90,18 @@ async def run_live(cfg: BotConfig) -> None:
     risk_mgr = RiskManager(config=cfg.risk)
     portfolio_mgr = PortfolioManager(client=client, risk_mgr=risk_mgr, allow_transfers=cfg.allow_internal_transfers)
     exec_engine = ExecutionEngine(client=client, risk_mgr=risk_mgr)
+    cost_model = CostModel(
+        taker_fee=DEFAULT_TAKER_FEE,
+        slippage_bps=DEFAULT_SLIPPAGE_BPS,
+        funding_rate_per_8h=cfg.short.funding_rate_per_8h,
+        borrow_rate_per_hour=cfg.short.borrow_rate_per_hour,
+        safety_buffer_bps=cfg.risk.min_ev_bps,
+    )
+    side_selector = SideSelector(
+        allow_shorts=cfg.short.allow_shorts,
+        require_futures_for_short=cfg.short.require_futures_for_short,
+    )
+    strategy_monitor = StrategyMonitor()
     strategies = _build_strategies()
 
     # Validate API connectivity
@@ -190,6 +205,15 @@ async def run_live(cfg: BotConfig) -> None:
                     if not strat.preconditions_met(signals):
                         continue
 
+                    # Check strategy monitor – skip if module auto-disabled
+                    if not strategy_monitor.is_enabled(alloc.strategy):
+                        if cfg.live_diagnostic:
+                            logger.debug(
+                                "[MONITOR] Skipping %s: module '%s' auto-disabled",
+                                sym, alloc.strategy,
+                            )
+                        continue
+
                     pos = risk_mgr.positions.get(sym)
                     decision = strat.evaluate(
                         signals,
@@ -210,15 +234,39 @@ async def run_live(cfg: BotConfig) -> None:
                         ))
                         session.commit()
 
-                    # EV gate: same gate applied in both backtest and live
-                    if decision.action.startswith("entry_"):
-                        cost_bps = (DEFAULT_TAKER_FEE * 2) * 10_000 + DEFAULT_SLIPPAGE_BPS * 2 + cfg.risk.min_ev_bps
-                        expected_bps = signals.volatility * 100.0 * signals.confidence
-                        if expected_bps < cost_bps:
+                    # Side selector: validate proposed side (squeeze filter, feasibility)
+                    if decision.action.startswith("entry_") and not pos:
+                        mkt_type = market.market_type if market else "spot"
+                        proposed_side = "long" if "long" in decision.action else "short"
+                        side_dec = side_selector.select(
+                            signals, market_type=mkt_type, proposed_side=proposed_side
+                        )
+                        if side_dec.side == "flat":
                             if cfg.live_diagnostic:
                                 logger.debug(
-                                    "[EV-GATE] Blocked %s: expected %.1f bps < cost %.1f bps",
-                                    sym, expected_bps, cost_bps,
+                                    "[SIDE-SELECTOR] Blocked %s %s: %s",
+                                    sym, proposed_side, side_dec.reason,
+                                )
+                            continue
+
+                    # EV gate: cost-aware, shared with backtest
+                    if decision.action.startswith("entry_"):
+                        mkt_type = market.market_type if market else "spot"
+                        is_futures = mkt_type == "futures"
+                        is_margin_short = mkt_type == "margin" and "short" in decision.action
+                        costs = cost_model.estimate(
+                            order_type="taker",
+                            holding_hours=cfg.short.expected_holding_hours,
+                            is_futures=is_futures,
+                            is_margin_short=is_margin_short,
+                            live_funding_rate=signals.funding_rate if signals.funding_rate != 0 else None,
+                        )
+                        expected_bps = signals.volatility * 100.0 * signals.confidence
+                        if not cost_model.ev_gate(expected_bps, costs):
+                            if cfg.live_diagnostic:
+                                logger.debug(
+                                    "[EV-GATE] Blocked %s: expected %.1f bps < cost %.1f bps + buffer %.1f",
+                                    sym, expected_bps, costs.total_bps, cfg.risk.min_ev_bps,
                                 )
                             continue
 
@@ -323,6 +371,7 @@ async def run_live(cfg: BotConfig) -> None:
                     elif decision.action == "exit":
                         if pos:
                             side = "sell" if pos.side == "long" else "buy"
+                            is_futures_exit = market.market_type == "futures" if market else False
 
                             if is_shadow:
                                 logger.info("[SHADOW] Would exit %s side=%s", sym, pos.side)
@@ -340,6 +389,7 @@ async def run_live(cfg: BotConfig) -> None:
                                 risk_mgr.update_position(sym, PositionInfo(
                                     symbol=sym, side=pos.side, size=0,
                                 ))
+                                strategy_monitor.record_trade(alloc.strategy, pnl, paper_fee)
                                 logger.info("[PAPER] Simulated exit %s pnl=%.4f fee=%.4f", sym, pnl, paper_fee)
                             else:
                                 result = await exec_engine.execute(
@@ -349,6 +399,7 @@ async def run_live(cfg: BotConfig) -> None:
                                         notional=abs(pos.size * pos.current_price),
                                         order_type=decision.order_type,
                                         reason=decision.reason,
+                                        reduce_only=is_futures_exit,
                                     ),
                                     market,
                                 )
@@ -360,6 +411,7 @@ async def run_live(cfg: BotConfig) -> None:
                                     risk_mgr.update_position(sym, PositionInfo(
                                         symbol=sym, side=pos.side, size=0,
                                     ))
+                                    strategy_monitor.record_trade(alloc.strategy, pnl)
 
                 except Exception:
                     logger.error("Error processing %s", sym, exc_info=True)
@@ -367,6 +419,8 @@ async def run_live(cfg: BotConfig) -> None:
             # Dashboard
             if cycle % 10 == 0:
                 print_dashboard(risk_mgr, active_strategies)
+                if cfg.live_diagnostic:
+                    logger.info("[MONITOR] %s", strategy_monitor.get_status())
 
         except Exception:
             logger.error("Trading loop error", exc_info=True)

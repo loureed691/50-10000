@@ -193,6 +193,21 @@ class RiskManager:
                 self.circuit_breaker_active = False
                 logger.info("Circuit breaker reset after daily review")
 
+    def check_squeeze_risk(self, signals: SignalScores) -> bool:
+        """Return True if short squeeze risk is elevated.
+
+        Delegates to the shared squeeze-risk heuristic used by :class:`SideSelector`.
+        Exposed here so live code can call ``risk_mgr.check_squeeze_risk(signals)``
+        without importing ``SideSelector`` directly.
+
+        Squeeze risk is flagged when:
+        - Recent volatility spike (normalized ATR > threshold).
+        - Strong positive momentum burst coincides with a volume anomaly.
+        """
+        # Import here to avoid circular imports; SideSelector does not import RiskManager.
+        from kucoin_bot.services.side_selector import SideSelector
+        return SideSelector()._squeeze_risk_high(signals)
+
     def get_risk_summary(self) -> dict:
         total_exposure = sum(
             abs(p.size * p.current_price * p.leverage) for p in self.positions.values()
