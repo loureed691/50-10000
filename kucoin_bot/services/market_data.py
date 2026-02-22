@@ -31,6 +31,7 @@ class MarketInfo:
     volume_24h: float = 0.0
     last_price: float = 0.0
     spread_bps: float = 0.0
+    market_type: str = "spot"
 
 
 @dataclass
@@ -63,8 +64,35 @@ class MarketDataService:
             )
             eligible[sym] = info
 
+        # Include eligible USDT futures contracts where available
+        try:
+            contracts = await self.client.get_futures_contracts()
+            for contract in contracts:
+                quote = contract.get("quoteCurrency") or contract.get("quoteCurrencyName")
+                if quote != "USDT":
+                    continue
+                sym = contract.get("symbol")
+                if not sym:
+                    continue
+                eligible[sym] = MarketInfo(
+                    symbol=sym,
+                    base=contract.get("baseCurrency", ""),
+                    quote="USDT",
+                    base_min_size=float(contract.get("lotSize", 0) or 0),
+                    base_increment=float(contract.get("multiplier", 0) or 0),
+                    price_increment=float(contract.get("tickSize", 0) or 0),
+                    min_funds=0.0,
+                    last_price=float(contract.get("markPrice", contract.get("lastTradePrice", 0)) or 0),
+                    spread_bps=0.0,
+                    market_type="futures",
+                )
+        except Exception:
+            logger.warning("Failed to refresh futures universe", exc_info=True)
+
         # Enrich with ticker data for top candidates (batch)
         for sym, info in list(eligible.items()):
+            if info.market_type == "futures":
+                continue
             try:
                 ticker = await self.client.get_ticker(sym)
                 info.last_price = float(ticker.get("price", 0) or 0)

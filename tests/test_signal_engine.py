@@ -53,3 +53,21 @@ class TestSignalEngine:
         assert "symbol" in d
         assert "regime" in d
         assert "momentum" in d
+
+    def test_orderbook_and_funding_inputs(self, sample_klines):
+        engine = SignalEngine()
+        scores = engine.compute(
+            "BTC-USDT",
+            sample_klines,
+            orderbook={"bids": [["1", "10"]], "asks": [["1", "2"]]},
+            funding_rate=0.0005,
+        )
+        assert scores.orderbook_imbalance > 0
+        assert scores.funding_rate == pytest.approx(0.0005)
+
+    def test_news_spike_regime(self, sample_klines):
+        engine = SignalEngine()
+        scores = engine.compute("BTC-USDT", sample_klines)
+        scores.volatility = 0.8
+        scores.volume_anomaly = 4.0
+        assert engine._classify_regime(scores) == Regime.NEWS_SPIKE

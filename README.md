@@ -9,7 +9,7 @@ A fully automatic, multi-strategy KuCoin API trading bot built in Python.
 
 - **Automatic market discovery** – finds all USDT-quoted pairs, filters by liquidity/spread
 - **Multi-source signal engine** – momentum, trend strength, mean reversion, volatility, volume anomalies, orderbook imbalance
-- **Regime classification** – trending, ranging, high-volatility, low-liquidity
+- **Regime classification** – trending, ranging, high-volatility, low-liquidity, news-spike
 - **6 strategy modules** – trend following, mean reversion, volatility breakout, scalping, hedging, risk-off
 - **Portfolio-level risk management** – drawdown limits, daily loss caps, exposure limits, circuit breaker
 - **Dynamic leverage** – only when justified by signal confidence and risk budget
