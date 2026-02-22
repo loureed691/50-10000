@@ -25,6 +25,10 @@ class RiskConfig:
     max_leverage: float = 3.0
     max_per_position_risk_pct: float = 2.0
     max_correlated_exposure_pct: float = 30.0
+    # EV gate: minimum expected-value buffer above round-trip costs (bps)
+    min_ev_bps: float = 10.0
+    # Minimum bars required between entry signals per symbol
+    cooldown_bars: int = 5
 
 
 @dataclass
@@ -36,12 +40,20 @@ class BotConfig:
     api_secret: str = ""
     api_passphrase: str = ""
 
-    # Operating mode
-    mode: str = "BACKTEST"  # LIVE or BACKTEST
+    # Operating mode: LIVE, PAPER, SHADOW, or BACKTEST (default: BACKTEST)
+    # LIVE  – real orders; requires LIVE_TRADING=true as a second explicit gate
+    # PAPER – simulated orders with live market data (no real risk)
+    # SHADOW – signal computation only; logs "would-trade" decisions, no orders
+    # BACKTEST – historical simulation
+    mode: str = "BACKTEST"
     kill_switch: bool = False
+    live_trading: bool = False  # Must be explicitly true to allow LIVE mode
 
     # Transfers
     allow_internal_transfers: bool = False
+
+    # Observability
+    live_diagnostic: bool = False
 
     # Database
     db_type: str = "sqlite"
@@ -64,6 +76,14 @@ class BotConfig:
     def is_live(self) -> bool:
         return self.mode.upper() == "LIVE"
 
+    @property
+    def is_paper(self) -> bool:
+        return self.mode.upper() == "PAPER"
+
+    @property
+    def is_shadow(self) -> bool:
+        return self.mode.upper() == "SHADOW"
+
 
 def load_config() -> BotConfig:
     """Load configuration from env vars, then optionally overlay a YAML file."""
@@ -73,7 +93,9 @@ def load_config() -> BotConfig:
         api_passphrase=os.getenv("KUCOIN_API_PASSPHRASE", ""),
         mode=os.getenv("BOT_MODE", "BACKTEST"),
         kill_switch=os.getenv("KILL_SWITCH", "false").lower() == "true",
+        live_trading=os.getenv("LIVE_TRADING", "false").lower() == "true",
         allow_internal_transfers=os.getenv("ALLOW_INTERNAL_TRANSFERS", "false").lower() == "true",
+        live_diagnostic=os.getenv("LIVE_DIAGNOSTIC", "false").lower() == "true",
         db_type=os.getenv("DB_TYPE", "sqlite"),
         db_url=os.getenv("DB_URL", "sqlite:///kucoin_bot.db"),
         redis_url=os.getenv("REDIS_URL"),
@@ -85,6 +107,8 @@ def load_config() -> BotConfig:
             max_leverage=float(os.getenv("MAX_LEVERAGE", "3.0")),
             max_per_position_risk_pct=float(os.getenv("MAX_PER_POSITION_RISK_PCT", "2.0")),
             max_correlated_exposure_pct=float(os.getenv("MAX_CORRELATED_EXPOSURE_PCT", "30.0")),
+            min_ev_bps=float(os.getenv("MIN_EV_BPS", "10.0")),
+            cooldown_bars=int(os.getenv("COOLDOWN_BARS", "5")),
         ),
     )
 
@@ -121,6 +145,8 @@ def _generate_default_yaml() -> None:
             "max_leverage": 3.0,
             "max_per_position_risk_pct": 2.0,
             "max_correlated_exposure_pct": 30.0,
+            "min_ev_bps": 10.0,
+            "cooldown_bars": 5,
         },
     }
     try:
