@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import time
 from typing import Any, Dict, List, Optional
@@ -136,7 +137,6 @@ class KuCoinClient:
         body_str = ""
 
         if body:
-            import json
             body_str = json.dumps(body)
 
         if signed:
@@ -160,7 +160,7 @@ class KuCoinClient:
                     if resp.status >= 400:
                         logger.error("HTTP %d: %s", resp.status, data)
                     return data
-            except (aiohttp.ClientError, ValueError) as exc:
+            except (aiohttp.ClientError, json.JSONDecodeError) as exc:
                 logger.warning("Request error (attempt %d): %s", attempt, exc)
                 await _async_sleep(1)
         return {"code": "error", "msg": "max retries exceeded"}

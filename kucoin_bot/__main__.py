@@ -503,7 +503,8 @@ def main() -> None:
             print(f"ERROR: {exc}", file=sys.stderr)
             sys.exit(1)
         except Exception as exc:
-            logger.critical("Fatal error in LIVE mode: %s", exc, exc_info=True)
+            print(f"ERROR: {exc}", file=sys.stderr)
+            logger.debug("Fatal error in LIVE mode", exc_info=True)
             sys.exit(1)
     elif cfg.mode.upper() in ("PAPER", "SHADOW"):
         try:
@@ -512,7 +513,8 @@ def main() -> None:
             print(f"ERROR: {exc}", file=sys.stderr)
             sys.exit(1)
         except Exception as exc:
-            logger.critical("Fatal error in %s mode: %s", cfg.mode, exc, exc_info=True)
+            print(f"ERROR: {exc}", file=sys.stderr)
+            logger.debug("Fatal error in %s mode", cfg.mode, exc_info=True)
             sys.exit(1)
     else:
         print(f"Unknown mode: {cfg.mode}. Use LIVE, PAPER, SHADOW, or BACKTEST.")
