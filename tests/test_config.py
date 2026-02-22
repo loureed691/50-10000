@@ -239,3 +239,37 @@ class TestModeResolutionIntegration:
             main_module.main()
         assert exc_info.value.code == 1
 
+    def test_cli_mode_arg_live_refused_without_live_trading(self, monkeypatch, tmp_path):
+        """--mode live via CLI arg must not raise TypeError for unknown kwarg 'cli_mode'.
+
+        Regression test for: TypeError: load_config() got an unexpected
+        keyword argument 'cli_mode' when running ``python -m kucoin_bot --mode live``.
+        """
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("BOT_MODE", raising=False)
+        monkeypatch.delenv("LIVE_TRADING", raising=False)
+        monkeypatch.setattr(sys, "argv", ["kucoin-bot", "--mode", "live"])
+
+        from kucoin_bot.__main__ import main
+        # Should exit with code 1 (LIVE_TRADING not set), NOT raise TypeError
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
+    def test_cli_mode_arg_backtest_runs_without_error(self, monkeypatch, tmp_path, capsys):
+        """--mode backtest via CLI arg must work end-to-end without TypeError.
+
+        Regression test for: TypeError: load_config() got an unexpected
+        keyword argument 'cli_mode' when running ``python -m kucoin_bot --mode backtest``.
+        """
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("BOT_MODE", raising=False)
+        monkeypatch.setattr(sys, "argv", ["kucoin-bot", "--mode", "backtest"])
+
+        from kucoin_bot.__main__ import main
+        # Should complete without raising TypeError or SystemExit
+        main()
+        # Verify the backtest actually ran by checking for summary output
+        captured = capsys.readouterr()
+        assert "Backtest:" in captured.out
+
