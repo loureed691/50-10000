@@ -104,6 +104,7 @@ All configuration is via environment variables (see `.env.example`). An optional
 | `BOT_MODE` | `BACKTEST` | `LIVE` or `BACKTEST` |
 | `KILL_SWITCH` | `false` | Set to `true` to stop all trading immediately |
 | `ALLOW_INTERNAL_TRANSFERS` | `false` | Allow Funding↔Trading↔Futures transfers |
+| `INTERNAL_TRANSFERS_ACK` | (empty) | Must equal `I_UNDERSTAND_INTERNAL_TRANSFERS_RISK` to enable transfers |
 | `MAX_DAILY_LOSS_PCT` | `3.0` | Circuit breaker: max daily loss % |
 | `MAX_DRAWDOWN_PCT` | `10.0` | Circuit breaker: max drawdown % |
 | `MAX_TOTAL_EXPOSURE_PCT` | `80.0` | Max portfolio exposure % |
@@ -123,7 +124,7 @@ All configuration is via environment variables (see `.env.example`). An optional
 ## Security Notes
 
 - API secrets are **never logged** – loaded from env vars only
-- Internal transfers require explicit `ALLOW_INTERNAL_TRANSFERS=true`
+- Internal transfers require explicit `ALLOW_INTERNAL_TRANSFERS=true` and `INTERNAL_TRANSFERS_ACK=I_UNDERSTAND_INTERNAL_TRANSFERS_RISK`
 - Docker runs as non-root user
 - All transfer routes are allow-listed with idempotency keys
 

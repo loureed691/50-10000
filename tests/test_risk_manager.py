@@ -71,6 +71,14 @@ class TestRiskManager:
         # 0.3 * 30000 = 9000 => 90% exposure
         assert rm.check_total_exposure() is True
 
+    def test_correlated_exposure_check(self):
+        rm = self._make_risk_mgr(10_000)
+        rm.positions["BTC-USDT"] = PositionInfo(
+            symbol="BTC-USDT", side="long", size=0.1, current_price=30000, leverage=1.0
+        )  # 30% exposure
+        assert rm.check_correlated_exposure(["BTC-USDT", "ETH-USDT"]) is True
+        assert rm.check_correlated_exposure(["ETH-USDT"]) is False
+
     def test_update_position_removal(self):
         rm = self._make_risk_mgr()
         rm.positions["BTC-USDT"] = PositionInfo(symbol="BTC-USDT", side="long", size=1.0)

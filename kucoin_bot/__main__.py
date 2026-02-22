@@ -187,6 +187,9 @@ async def run_live(cfg: BotConfig) -> None:
 
                     # Execute
                     if decision.action.startswith("entry_"):
+                        if risk_mgr.check_correlated_exposure(list(risk_mgr.positions.keys()) + [sym]):
+                            logger.warning("Skipping %s entry due to correlated exposure cap", sym)
+                            continue
                         notional = risk_mgr.compute_position_size(
                             sym, market.last_price if market else 0, signals.volatility, signals
                         )

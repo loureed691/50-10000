@@ -35,3 +35,13 @@ class TestConfig:
         cfg = load_config()
         assert cfg.risk.max_leverage == 5.0
         assert cfg.mode == "LIVE"
+
+    def test_internal_transfers_require_ack(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ALLOW_INTERNAL_TRANSFERS", "true")
+        monkeypatch.chdir(tmp_path)
+        cfg = load_config()
+        assert cfg.allow_internal_transfers is False
+
+        monkeypatch.setenv("INTERNAL_TRANSFERS_ACK", "I_UNDERSTAND_INTERNAL_TRANSFERS_RISK")
+        cfg = load_config()
+        assert cfg.allow_internal_transfers is True

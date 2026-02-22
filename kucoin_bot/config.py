@@ -13,6 +13,7 @@ import yaml
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CONFIG_PATH = Path("config.yaml")
+_INTERNAL_TRANSFER_ACK = "I_UNDERSTAND_INTERNAL_TRANSFERS_RISK"
 
 
 @dataclass
@@ -67,13 +68,15 @@ class BotConfig:
 
 def load_config() -> BotConfig:
     """Load configuration from env vars, then optionally overlay a YAML file."""
+    transfers_enabled = os.getenv("ALLOW_INTERNAL_TRANSFERS", "false").lower() == "true"
+    transfers_ack = os.getenv("INTERNAL_TRANSFERS_ACK", "")
     cfg = BotConfig(
         api_key=os.getenv("KUCOIN_API_KEY", ""),
         api_secret=os.getenv("KUCOIN_API_SECRET", ""),
         api_passphrase=os.getenv("KUCOIN_API_PASSPHRASE", ""),
         mode=os.getenv("BOT_MODE", "BACKTEST"),
         kill_switch=os.getenv("KILL_SWITCH", "false").lower() == "true",
-        allow_internal_transfers=os.getenv("ALLOW_INTERNAL_TRANSFERS", "false").lower() == "true",
+        allow_internal_transfers=transfers_enabled and transfers_ack == _INTERNAL_TRANSFER_ACK,
         db_type=os.getenv("DB_TYPE", "sqlite"),
         db_url=os.getenv("DB_URL", "sqlite:///kucoin_bot.db"),
         redis_url=os.getenv("REDIS_URL"),
@@ -106,6 +109,8 @@ def load_config() -> BotConfig:
         _generate_default_yaml()
 
     _setup_logging(cfg.log_level)
+    if transfers_enabled and not cfg.allow_internal_transfers:
+        logger.warning("Internal transfers requested but acknowledgment string is missing or invalid")
     return cfg
 
 

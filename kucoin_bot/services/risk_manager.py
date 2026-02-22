@@ -71,6 +71,18 @@ class RiskManager:
         exposure_pct = total / self.current_equity * 100
         return exposure_pct >= self.config.max_total_exposure_pct
 
+    def check_correlated_exposure(self, symbols: list[str]) -> bool:
+        """Returns True if exposure across the provided symbols exceeds correlated cap."""
+        if self.current_equity <= 0:
+            return False
+        total = sum(
+            abs(p.size * p.current_price * p.leverage)
+            for sym, p in self.positions.items()
+            if sym in symbols
+        )
+        exposure_pct = total / self.current_equity * 100
+        return exposure_pct >= self.config.max_correlated_exposure_pct
+
     def check_circuit_breaker(self) -> bool:
         """Evaluate all circuit-breaker conditions. Activates if breached."""
         if self.circuit_breaker_active:
