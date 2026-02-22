@@ -110,7 +110,11 @@ def load_config() -> BotConfig:
 
     _setup_logging(cfg.log_level)
     if transfers_enabled and not cfg.allow_internal_transfers:
-        logger.warning("Internal transfers requested but acknowledgment string is missing or invalid")
+        logger.warning(
+            "Internal transfers requested but acknowledgment is missing or invalid. "
+            "Set INTERNAL_TRANSFERS_ACK=%s to enable.",
+            _INTERNAL_TRANSFER_ACK,
+        )
     return cfg
 
 

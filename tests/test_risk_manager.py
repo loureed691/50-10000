@@ -79,6 +79,23 @@ class TestRiskManager:
         assert rm.check_correlated_exposure(["BTC-USDT", "ETH-USDT"]) is True
         assert rm.check_correlated_exposure(["ETH-USDT"]) is False
 
+    def test_correlated_exposure_zero_equity(self):
+        rm = self._make_risk_mgr(10_000)
+        rm.current_equity = 0
+        rm.positions["BTC-USDT"] = PositionInfo(
+            symbol="BTC-USDT", side="long", size=0.1, current_price=30000, leverage=1.0
+        )
+        assert rm.check_correlated_exposure(["BTC-USDT"]) is False
+
+    def test_correlated_exposure_boundary_equals_limit(self):
+        rm = self._make_risk_mgr(10_000)
+        # 0.1 * 30000 = 3000 => exactly 30% of 10_000 equity (default cap)
+        assert rm.config.max_correlated_exposure_pct == 30.0
+        rm.positions["BTC-USDT"] = PositionInfo(
+            symbol="BTC-USDT", side="long", size=0.1, current_price=30000, leverage=1.0
+        )
+        assert rm.check_correlated_exposure(["BTC-USDT"]) is True
+
     def test_update_position_removal(self):
         rm = self._make_risk_mgr()
         rm.positions["BTC-USDT"] = PositionInfo(symbol="BTC-USDT", side="long", size=1.0)

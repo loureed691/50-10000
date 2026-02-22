@@ -72,7 +72,7 @@ class RiskManager:
         return exposure_pct >= self.config.max_total_exposure_pct
 
     def check_correlated_exposure(self, symbols: list[str]) -> bool:
-        """Returns True if exposure across the provided symbols exceeds correlated cap."""
+        """Returns True if exposure across correlated symbols meets or exceeds cap."""
         if self.current_equity <= 0:
             return False
         total = sum(
