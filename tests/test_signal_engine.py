@@ -65,9 +65,17 @@ class TestSignalEngine:
         assert scores.orderbook_imbalance > 0
         assert scores.funding_rate == pytest.approx(0.0005)
 
-    def test_news_spike_regime(self, sample_klines):
+    def test_news_spike_regime(self):
         engine = SignalEngine()
-        scores = engine.compute("BTC-USDT", sample_klines)
-        scores.volatility = 0.8
-        scores.volume_anomaly = 4.0
-        assert engine._classify_regime(scores) == Regime.NEWS_SPIKE
+        klines = []
+        for i in range(60):
+            close = 100 + (i % 2)
+            volume = 90 + (i % 3) * 10
+            if i == 59:
+                close = 160
+                volume = 10000
+            high = close + 5
+            low = close - 5
+            klines.append([i * 3600, "100", str(close), str(high), str(low), str(volume), str(volume * close)])
+        scores = engine.compute("BTC-USDT", klines)
+        assert scores.regime == Regime.NEWS_SPIKE

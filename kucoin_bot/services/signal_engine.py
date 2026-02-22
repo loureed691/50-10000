@@ -12,6 +12,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+_NEWS_SPIKE_VOL_THRESHOLD = 0.6
+_NEWS_SPIKE_VOLUME_ANOMALY_THRESHOLD = 3.0
+_LOW_LIQUIDITY_VOLUME_ANOMALY_THRESHOLD = -1.5
+
 
 class Regime(str, Enum):
     TRENDING_UP = "trending_up"
@@ -178,9 +182,12 @@ class SignalEngine:
 
     @staticmethod
     def _classify_regime(scores: SignalScores) -> Regime:
-        if scores.volatility > 0.6 and abs(scores.volume_anomaly) > 3:
+        if (
+            scores.volatility > _NEWS_SPIKE_VOL_THRESHOLD
+            and scores.volume_anomaly > _NEWS_SPIKE_VOLUME_ANOMALY_THRESHOLD
+        ):
             return Regime.NEWS_SPIKE
-        if scores.volume_anomaly < -1.5:
+        if scores.volume_anomaly < _LOW_LIQUIDITY_VOLUME_ANOMALY_THRESHOLD:
             return Regime.LOW_LIQUIDITY
         if scores.volatility > 0.7:
             return Regime.HIGH_VOLATILITY
@@ -210,8 +217,20 @@ class SignalEngine:
             return 0.0
         bids = orderbook.get("bids", [])
         asks = orderbook.get("asks", [])
-        bid_vol = sum(float(level[1]) for level in bids[:10] if len(level) > 1)
-        ask_vol = sum(float(level[1]) for level in asks[:10] if len(level) > 1)
+        bid_vol = 0.0
+        ask_vol = 0.0
+        for level in bids[:10]:
+            if len(level) > 1:
+                try:
+                    bid_vol += float(level[1])
+                except (TypeError, ValueError):
+                    continue
+        for level in asks[:10]:
+            if len(level) > 1:
+                try:
+                    ask_vol += float(level[1])
+                except (TypeError, ValueError):
+                    continue
         total = bid_vol + ask_vol
         if total <= 0:
             return 0.0

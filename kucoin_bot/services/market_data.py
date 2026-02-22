@@ -68,7 +68,8 @@ class MarketDataService:
         try:
             contracts = await self.client.get_futures_contracts()
             for contract in contracts:
-                quote = contract.get("quoteCurrency") or contract.get("quoteCurrencyName")
+                quote_currency = contract.get("quoteCurrency")
+                quote = quote_currency if quote_currency is not None else contract.get("quoteCurrencyName")
                 if quote != "USDT":
                     continue
                 sym = contract.get("symbol")
@@ -87,7 +88,7 @@ class MarketDataService:
                     market_type="futures",
                 )
         except Exception:
-            logger.warning("Failed to refresh futures universe", exc_info=True)
+            logger.warning("Failed to refresh futures universe (spot universe remains available)", exc_info=True)
 
         # Enrich with ticker data for top candidates (batch)
         for sym, info in list(eligible.items()):
