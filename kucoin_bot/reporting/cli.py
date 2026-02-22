@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 from typing import Dict, List
@@ -9,6 +10,9 @@ from typing import Dict, List
 from kucoin_bot.services.risk_manager import RiskManager
 
 logger = logging.getLogger(__name__)
+
+# Fallback epoch for synthetic bar-index timestamps (bar_index * 3600 seconds)
+_SYNTHETIC_EPOCH = datetime.datetime(2000, 1, 1)
 
 
 def print_dashboard(risk_mgr: RiskManager, strategies_active: Dict[str, str] | None = None) -> str:
@@ -66,12 +70,11 @@ def export_backtest_report(
     daily: Dict[str, float] = {}
     weekly: Dict[str, float] = {}
     for t in closed_trades:
-        import datetime
         try:
             dt = datetime.datetime.utcfromtimestamp(t.timestamp)
         except (OSError, OverflowError, ValueError):
-            # Synthetic timestamps (bar index * 3600 may be very small)
-            dt = datetime.datetime(2000, 1, 1) + datetime.timedelta(seconds=t.timestamp)
+            # Synthetic timestamps (bar index * 3600 may be too small for utcfromtimestamp)
+            dt = _SYNTHETIC_EPOCH + datetime.timedelta(seconds=t.timestamp)
         day_key = dt.strftime("%Y-%m-%d")
         week_key = dt.strftime("%Y-W%W")
         daily[day_key] = daily.get(day_key, 0.0) + t.pnl

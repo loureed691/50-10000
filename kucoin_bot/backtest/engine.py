@@ -23,6 +23,10 @@ DEFAULT_SLIPPAGE_BPS = 5  # 0.05%
 DEFAULT_FILL_RATE = 0.95  # 95% fill probability for limit orders
 DEFAULT_LATENCY_MS = 50  # simulated order latency in milliseconds
 
+# Price drift per millisecond of latency (0.01% / ms ≈ 0.6% per minute at mid-range latency)
+# Represents market microstructure movement during execution delay.
+_LATENCY_DRIFT_PER_MS = 0.000001  # fraction of price per ms
+
 
 @dataclass
 class BacktestTrade:
@@ -159,9 +163,9 @@ class BacktestEngine:
                 notional = risk_mgr.compute_position_size(symbol, close, signals.volatility, signals)
                 if notional > 0:
                     size = notional / close
-                    # Latency simulation: use a slightly later price proxy via noise
-                    latency = rng.gauss(self.latency_ms, self.latency_ms * 0.2)
-                    latency_slip = close * (latency / 1_000) * 0.0001  # tiny drift per ms
+                    # Latency simulation: Gaussian around configured latency, clamped >= 0
+                    latency = max(0.0, rng.gauss(self.latency_ms, self.latency_ms * 0.2))
+                    latency_slip = close * latency * _LATENCY_DRIFT_PER_MS
                     # Slippage
                     slip = close * (self.slippage_bps / 10_000) * (1 if "long" in decision.action else -1)
                     fill_price = close + slip + latency_slip
@@ -180,8 +184,8 @@ class BacktestEngine:
                     trades.append(BacktestTrade(ts, symbol, decision.action, fill_price, size, fee, latency_ms=latency))
 
             elif decision.action == "exit" and position_side:
-                latency = rng.gauss(self.latency_ms, self.latency_ms * 0.2)
-                latency_slip = close * (latency / 1_000) * 0.0001
+                latency = max(0.0, rng.gauss(self.latency_ms, self.latency_ms * 0.2))
+                latency_slip = close * latency * _LATENCY_DRIFT_PER_MS
                 slip = close * (self.slippage_bps / 10_000) * (-1 if position_side == "long" else 1)
                 fill_price = close + slip + latency_slip
                 fee = position_size * fill_price * self.taker_fee
@@ -252,9 +256,9 @@ class BacktestEngine:
         # Expectancy = avg PnL per closed trade
         expectancy = float(np.mean([t.pnl for t in closed])) if closed else 0.0
 
-        # Turnover = total traded notional relative to initial equity
-        total_notional = sum(t.price * t.quantity for t in trades)
-        turnover = (total_notional / initial) if initial > 0 else 0.0
+        # Turnover = entry notional traded relative to initial equity (entries only to avoid double-count)
+        entry_notional = sum(t.price * t.quantity for t in trades if t.side != "exit")
+        turnover = (entry_notional / initial) if initial > 0 else 0.0
 
         return BacktestResult(
             initial_equity=initial,
