@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from kucoin_bot.config import RiskConfig
 from kucoin_bot.services.signal_engine import SignalScores
@@ -70,6 +70,31 @@ class RiskManager:
         )
         exposure_pct = total / self.current_equity * 100
         return exposure_pct >= self.config.max_total_exposure_pct
+
+    def check_correlated_exposure(self, symbols: List[str]) -> bool:
+        """Returns True if correlated exposure (same-direction group) exceeds limit.
+
+        Treats all provided symbols as a correlated group and checks that their
+        combined notional stays below max_correlated_exposure_pct.
+
+        Args:
+            symbols: List of symbols considered correlated.
+        """
+        if self.current_equity <= 0 or not symbols:
+            return False
+        group_notional = sum(
+            abs(p.size * p.current_price * p.leverage)
+            for sym, p in self.positions.items()
+            if sym in symbols
+        )
+        exposure_pct = group_notional / self.current_equity * 100
+        if exposure_pct >= self.config.max_correlated_exposure_pct:
+            logger.warning(
+                "Correlated exposure %.1f%% >= limit %.1f%%",
+                exposure_pct, self.config.max_correlated_exposure_pct,
+            )
+            return True
+        return False
 
     def check_circuit_breaker(self) -> bool:
         """Evaluate all circuit-breaker conditions. Activates if breached."""

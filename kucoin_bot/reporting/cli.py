@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Dict
+from typing import Dict, List
 
 from kucoin_bot.services.risk_manager import RiskManager
 
@@ -43,3 +43,58 @@ def export_performance(risk_mgr: RiskManager, filepath: str = "performance.json"
     with open(filepath, "w") as f:
         json.dump(summary, f, indent=2)
     logger.info("Performance exported to %s", filepath)
+
+
+def export_backtest_report(
+    result: "BacktestResult",  # type: ignore[name-defined]
+    filepath: str = "backtest_report.json",
+) -> dict:
+    """Export a full backtest performance report with daily/weekly aggregation.
+
+    Args:
+        result: BacktestResult from BacktestEngine.run() or walk_forward().
+        filepath: Output JSON path.
+
+    Returns:
+        The report dict (also written to filepath).
+    """
+    from kucoin_bot.backtest.engine import BacktestResult, BacktestTrade
+
+    closed_trades: List[BacktestTrade] = [t for t in result.trades if t.side == "exit"]
+
+    # Daily PnL aggregation (timestamp is bar index * 3600 or unix seconds)
+    daily: Dict[str, float] = {}
+    weekly: Dict[str, float] = {}
+    for t in closed_trades:
+        import datetime
+        try:
+            dt = datetime.datetime.utcfromtimestamp(t.timestamp)
+        except (OSError, OverflowError, ValueError):
+            # Synthetic timestamps (bar index * 3600 may be very small)
+            dt = datetime.datetime(2000, 1, 1) + datetime.timedelta(seconds=t.timestamp)
+        day_key = dt.strftime("%Y-%m-%d")
+        week_key = dt.strftime("%Y-W%W")
+        daily[day_key] = daily.get(day_key, 0.0) + t.pnl
+        weekly[week_key] = weekly.get(week_key, 0.0) + t.pnl
+
+    report = {
+        "summary": {
+            "initial_equity": result.initial_equity,
+            "final_equity": result.final_equity,
+            "total_return_pct": result.total_return_pct,
+            "max_drawdown_pct": result.max_drawdown_pct,
+            "sharpe_ratio": result.sharpe_ratio,
+            "win_rate": result.win_rate,
+            "total_trades": result.total_trades,
+            "total_fees": result.total_fees,
+            "expectancy": result.expectancy,
+            "turnover": result.turnover,
+        },
+        "daily_pnl": daily,
+        "weekly_pnl": weekly,
+    }
+
+    with open(filepath, "w") as f:
+        json.dump(report, f, indent=2)
+    logger.info("Backtest report exported to %s", filepath)
+    return report

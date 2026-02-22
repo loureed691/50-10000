@@ -94,3 +94,27 @@ class TestRiskManager:
         rm.reset_daily()
         assert rm.daily_pnl == 0.0
         assert rm.circuit_breaker_active is True
+
+    def test_correlated_exposure_check(self):
+        rm = self._make_risk_mgr(10_000)
+        rm.positions["BTC-USDT"] = PositionInfo(
+            symbol="BTC-USDT", side="long", size=0.1, current_price=15000, leverage=1.0
+        )
+        rm.positions["ETH-USDT"] = PositionInfo(
+            symbol="ETH-USDT", side="long", size=1.0, current_price=1500, leverage=1.0
+        )
+        # BTC: 0.1 * 15000 = 1500; ETH: 1.0 * 1500 = 1500 => 3000 / 10000 = 30% (at limit)
+        group = ["BTC-USDT", "ETH-USDT"]
+        assert rm.check_correlated_exposure(group) is True
+
+    def test_correlated_exposure_under_limit(self):
+        rm = self._make_risk_mgr(10_000)
+        rm.positions["BTC-USDT"] = PositionInfo(
+            symbol="BTC-USDT", side="long", size=0.01, current_price=10000, leverage=1.0
+        )
+        # 0.01 * 10000 = 100 => 1% - well under 30%
+        assert rm.check_correlated_exposure(["BTC-USDT"]) is False
+
+    def test_correlated_exposure_empty_symbols(self):
+        rm = self._make_risk_mgr(10_000)
+        assert rm.check_correlated_exposure([]) is False
