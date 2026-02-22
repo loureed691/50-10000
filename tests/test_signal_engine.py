@@ -53,3 +53,56 @@ class TestSignalEngine:
         assert "symbol" in d
         assert "regime" in d
         assert "momentum" in d
+
+    def test_orderbook_and_funding_inputs(self, sample_klines):
+        engine = SignalEngine()
+        scores = engine.compute(
+            "BTC-USDT",
+            sample_klines,
+            orderbook={"bids": [["1", "10"]], "asks": [["1", "2"]]},
+            funding_rate=0.0005,
+        )
+        assert scores.orderbook_imbalance > 0
+        assert scores.funding_rate == pytest.approx(0.0005)
+
+    def test_orderbook_imbalance_equal_volumes(self, sample_klines):
+        engine = SignalEngine()
+        scores = engine.compute(
+            "BTC-USDT",
+            sample_klines,
+            orderbook={"bids": [["1", "10"]], "asks": [["1", "10"]]},
+        )
+        assert scores.orderbook_imbalance == pytest.approx(0.0)
+
+    def test_orderbook_imbalance_empty_orderbook(self, sample_klines):
+        engine = SignalEngine()
+        scores = engine.compute(
+            "BTC-USDT",
+            sample_klines,
+            orderbook={"bids": [], "asks": []},
+        )
+        assert scores.orderbook_imbalance == pytest.approx(0.0)
+
+    def test_orderbook_imbalance_malformed_levels(self, sample_klines):
+        engine = SignalEngine()
+        scores = engine.compute(
+            "BTC-USDT",
+            sample_klines,
+            orderbook={"bids": [["bad", "bad"]], "asks": [["bad", "bad"]]},
+        )
+        assert scores.orderbook_imbalance == pytest.approx(0.0)
+
+    def test_news_spike_regime(self):
+        engine = SignalEngine()
+        klines = []
+        for i in range(60):
+            close = 100 + (i % 2)
+            volume = 90 + (i % 3) * 10
+            if i == 59:
+                close = 160
+                volume = 10000
+            high = close + 5
+            low = close - 5
+            klines.append([i * 3600, "100", str(close), str(high), str(low), str(volume), str(volume * close)])
+        scores = engine.compute("BTC-USDT", klines)
+        assert scores.regime == Regime.NEWS_SPIKE

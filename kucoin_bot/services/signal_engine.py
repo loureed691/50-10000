@@ -12,6 +12,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+_NEWS_SPIKE_VOL_THRESHOLD = 0.6
+_NEWS_SPIKE_VOLUME_ANOMALY_THRESHOLD = 3.0
+_LOW_LIQUIDITY_VOLUME_ANOMALY_THRESHOLD = -1.5
+
 
 class Regime(str, Enum):
     TRENDING_UP = "trending_up"
@@ -19,6 +23,7 @@ class Regime(str, Enum):
     RANGING = "ranging"
     HIGH_VOLATILITY = "high_volatility"
     LOW_LIQUIDITY = "low_liquidity"
+    NEWS_SPIKE = "news_spike"
     UNKNOWN = "unknown"
 
 
@@ -59,7 +64,13 @@ class SignalEngine:
     lookback: int = 50
     _cache: Dict[str, SignalScores] = field(default_factory=dict)
 
-    def compute(self, symbol: str, klines: List[list]) -> SignalScores:
+    def compute(
+        self,
+        symbol: str,
+        klines: List[list],
+        orderbook: Optional[dict] = None,
+        funding_rate: Optional[float] = None,
+    ) -> SignalScores:
         """Compute signal scores from KuCoin klines.
 
         KuCoin kline format: [time, open, close, high, low, volume, turnover]
@@ -93,6 +104,13 @@ class SignalEngine:
             scores.volume_anomaly = float(
                 (volumes[-1] - np.mean(volumes[:-1])) / np.std(volumes[:-1])
             )
+
+        # --- Orderbook imbalance ---
+        scores.orderbook_imbalance = self._orderbook_imbalance(orderbook)
+
+        # --- Funding rate ---
+        if funding_rate is not None:
+            scores.funding_rate = float(funding_rate)
 
         # --- Regime ---
         scores.regime = self._classify_regime(scores)
@@ -164,6 +182,13 @@ class SignalEngine:
 
     @staticmethod
     def _classify_regime(scores: SignalScores) -> Regime:
+        if (
+            scores.volatility > _NEWS_SPIKE_VOL_THRESHOLD
+            and scores.volume_anomaly > _NEWS_SPIKE_VOLUME_ANOMALY_THRESHOLD
+        ):
+            return Regime.NEWS_SPIKE
+        if scores.volume_anomaly < _LOW_LIQUIDITY_VOLUME_ANOMALY_THRESHOLD:
+            return Regime.LOW_LIQUIDITY
         if scores.volatility > 0.7:
             return Regime.HIGH_VOLATILITY
         if scores.trend_strength > 0.5:
@@ -185,3 +210,28 @@ class SignalEngine:
         if factors:
             return float(np.clip(sum(factors) / len(factors), 0, 1))
         return 0.0
+
+    @staticmethod
+    def _orderbook_imbalance(orderbook: Optional[dict]) -> float:
+        if not orderbook:
+            return 0.0
+        bids = orderbook.get("bids", [])
+        asks = orderbook.get("asks", [])
+        bid_vol = 0.0
+        ask_vol = 0.0
+        for level in bids[:10]:
+            if len(level) > 1:
+                try:
+                    bid_vol += float(level[1])
+                except (TypeError, ValueError):
+                    continue
+        for level in asks[:10]:
+            if len(level) > 1:
+                try:
+                    ask_vol += float(level[1])
+                except (TypeError, ValueError):
+                    continue
+        total = bid_vol + ask_vol
+        if total <= 0:
+            return 0.0
+        return float(np.clip((bid_vol - ask_vol) / total, -1, 1))
