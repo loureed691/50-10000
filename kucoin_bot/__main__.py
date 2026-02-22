@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import logging
@@ -70,8 +71,11 @@ async def run_live(cfg: BotConfig) -> None:
     mode_label = cfg.mode.upper()
 
     if not cfg.api_key or not cfg.api_secret:
-        logger.error("API credentials not set. Set KUCOIN_API_KEY, KUCOIN_API_SECRET, KUCOIN_API_PASSPHRASE.")
-        return
+        raise RuntimeError(
+            "API credentials missing. "
+            "Set KUCOIN_API_KEY, KUCOIN_API_SECRET, and KUCOIN_API_PASSPHRASE "
+            "before starting in LIVE, PAPER, or SHADOW mode."
+        )
 
     if is_shadow:
         logger.info("SHADOW mode: signals will be computed and logged; NO orders will be placed.")
@@ -472,7 +476,17 @@ def run_backtest(cfg: BotConfig) -> None:
 
 
 def main() -> None:
-    cfg = load_config()
+    parser = argparse.ArgumentParser(description="KuCoin Trading Bot")
+    parser.add_argument(
+        "--mode",
+        choices=["live", "paper", "shadow", "backtest"],
+        metavar="MODE",
+        help="Operating mode: live, paper, shadow, or backtest. "
+             "Overrides BOT_MODE/MODE env vars and config.yaml.",
+    )
+    args = parser.parse_args()
+
+    cfg = load_config(cli_mode=args.mode)
 
     if cfg.mode.upper() == "BACKTEST":
         run_backtest(cfg)
@@ -483,9 +497,17 @@ def main() -> None:
                 "Set the environment variable LIVE_TRADING=true to confirm you understand real money is at risk."
             )
             sys.exit(1)
-        asyncio.run(run_live(cfg))
+        try:
+            asyncio.run(run_live(cfg))
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}")
+            sys.exit(1)
     elif cfg.mode.upper() in ("PAPER", "SHADOW"):
-        asyncio.run(run_live(cfg))
+        try:
+            asyncio.run(run_live(cfg))
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}")
+            sys.exit(1)
     else:
         print(f"Unknown mode: {cfg.mode}. Use LIVE, PAPER, SHADOW, or BACKTEST.")
         sys.exit(1)

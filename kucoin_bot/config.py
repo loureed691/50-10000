@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import os
 import logging
 from dataclasses import dataclass, field
@@ -13,6 +14,74 @@ import yaml
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CONFIG_PATH = Path("config.yaml")
+
+# Truthy strings accepted by parse_bool
+_TRUE_STRINGS = frozenset({"1", "true", "yes", "on"})
+# Falsy strings accepted by parse_bool
+_FALSE_STRINGS = frozenset({"0", "false", "no", "off"})
+
+
+def parse_bool(value: str) -> bool:
+    """Parse a string to bool, accepting common truthy/falsy variants.
+
+    Raises ValueError for unrecognised values.
+    """
+    lower = value.strip().lower()
+    if lower in _TRUE_STRINGS:
+        return True
+    if lower in _FALSE_STRINGS:
+        return False
+    raise ValueError(
+        f"Cannot parse {value!r} as boolean. "
+        f"Use one of: {sorted(_TRUE_STRINGS | _FALSE_STRINGS)}"
+    )
+
+
+class Mode(str, enum.Enum):
+    """Supported operating modes."""
+
+    LIVE = "LIVE"
+    PAPER = "PAPER"
+    SHADOW = "SHADOW"
+    BACKTEST = "BACKTEST"
+
+    @classmethod
+    def from_str(cls, value: str) -> "Mode":
+        try:
+            return cls(value.strip().upper())
+        except ValueError:
+            valid = ", ".join(m.value for m in cls)
+            raise ValueError(f"Unknown mode {value!r}. Valid modes: {valid}") from None
+
+
+def resolve_mode(
+    cli_mode: Optional[str],
+    env: dict[str, str],
+    yaml_mode: Optional[str],
+) -> tuple[Mode, str]:
+    """Return ``(Mode, source_description)`` with clear precedence.
+
+    Precedence (highest to lowest):
+    1. CLI ``--mode`` flag
+    2. Environment variable ``MODE`` or ``BOT_MODE``
+    3. YAML ``mode`` key
+    4. Hardcoded default (BACKTEST)
+    """
+    if cli_mode:
+        mode = Mode.from_str(cli_mode)
+        return mode, f"CLI --mode {cli_mode}"
+
+    env_mode = env.get("MODE") or env.get("BOT_MODE")
+    if env_mode:
+        mode = Mode.from_str(env_mode)
+        source = "env MODE" if env.get("MODE") else "env BOT_MODE"
+        return mode, f"{source}={env_mode}"
+
+    if yaml_mode:
+        mode = Mode.from_str(yaml_mode)
+        return mode, f"config.yaml mode={yaml_mode}"
+
+    return Mode.BACKTEST, "default (BACKTEST)"
 
 
 @dataclass
@@ -105,57 +174,73 @@ class BotConfig:
         return self.mode.upper() == "SHADOW"
 
 
-def load_config() -> BotConfig:
-    """Load configuration from env vars, then optionally overlay a YAML file."""
+def load_config(cli_mode: Optional[str] = None) -> BotConfig:
+    """Load configuration with clear precedence: CLI > env vars > YAML > defaults.
+
+    Args:
+        cli_mode: Mode string from a CLI ``--mode`` flag, or ``None``.
+    """
+    # Step 1: load YAML as lowest-priority source (below env vars)
+    yaml_data: dict = {}
+    if _DEFAULT_CONFIG_PATH.exists():
+        try:
+            with open(_DEFAULT_CONFIG_PATH) as fh:
+                yaml_data = yaml.safe_load(fh) or {}
+        except Exception:
+            logger.warning("Failed to read config.yaml, using env/defaults", exc_info=True)
+    else:
+        _generate_default_yaml()
+
+    yaml_risk: dict = yaml_data.get("risk", {})
+
+    # Step 2: resolve mode with explicit source logging
+    mode_val, mode_source = resolve_mode(cli_mode, dict(os.environ), yaml_data.get("mode"))
+    logger.info("Mode resolved: %s (source: %s)", mode_val.value, mode_source)
+
+    # Step 3: env vars take precedence over YAML for scalar settings
+    def _env_or_yaml(env_key: str, yaml_key: str, default: str) -> str:
+        return os.getenv(env_key) or str(yaml_data.get(yaml_key, default))
+
+    def _bool_env(env_key: str, default: str = "false") -> bool:
+        raw = os.getenv(env_key, default)
+        try:
+            return parse_bool(raw)
+        except ValueError:
+            logger.warning("Invalid boolean value %r for %s, using %s", raw, env_key, default)
+            return parse_bool(default)
+
     cfg = BotConfig(
         api_key=os.getenv("KUCOIN_API_KEY", ""),
         api_secret=os.getenv("KUCOIN_API_SECRET", ""),
         api_passphrase=os.getenv("KUCOIN_API_PASSPHRASE", ""),
-        mode=os.getenv("BOT_MODE", "BACKTEST"),
-        kill_switch=os.getenv("KILL_SWITCH", "false").lower() == "true",
-        live_trading=os.getenv("LIVE_TRADING", "false").lower() == "true",
-        allow_internal_transfers=os.getenv("ALLOW_INTERNAL_TRANSFERS", "false").lower() == "true",
-        live_diagnostic=os.getenv("LIVE_DIAGNOSTIC", "false").lower() == "true",
-        db_type=os.getenv("DB_TYPE", "sqlite"),
-        db_url=os.getenv("DB_URL", "sqlite:///kucoin_bot.db"),
-        redis_url=os.getenv("REDIS_URL"),
-        log_level=os.getenv("LOG_LEVEL", "INFO"),
+        mode=mode_val.value,
+        kill_switch=_bool_env("KILL_SWITCH"),
+        live_trading=_bool_env("LIVE_TRADING"),
+        allow_internal_transfers=_bool_env("ALLOW_INTERNAL_TRANSFERS"),
+        live_diagnostic=_bool_env("LIVE_DIAGNOSTIC"),
+        db_type=_env_or_yaml("DB_TYPE", "db_type", "sqlite"),
+        db_url=_env_or_yaml("DB_URL", "db_url", "sqlite:///kucoin_bot.db"),
+        redis_url=os.getenv("REDIS_URL") or yaml_data.get("redis_url"),
+        log_level=_env_or_yaml("LOG_LEVEL", "log_level", "INFO"),
         risk=RiskConfig(
-            max_daily_loss_pct=float(os.getenv("MAX_DAILY_LOSS_PCT", "3.0")),
-            max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "10.0")),
-            max_total_exposure_pct=float(os.getenv("MAX_TOTAL_EXPOSURE_PCT", "80.0")),
-            max_leverage=float(os.getenv("MAX_LEVERAGE", "3.0")),
-            max_per_position_risk_pct=float(os.getenv("MAX_PER_POSITION_RISK_PCT", "2.0")),
-            max_correlated_exposure_pct=float(os.getenv("MAX_CORRELATED_EXPOSURE_PCT", "30.0")),
-            min_ev_bps=float(os.getenv("MIN_EV_BPS", "10.0")),
-            cooldown_bars=int(os.getenv("COOLDOWN_BARS", "5")),
+            max_daily_loss_pct=float(os.getenv("MAX_DAILY_LOSS_PCT") or yaml_risk.get("max_daily_loss_pct", 3.0)),
+            max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT") or yaml_risk.get("max_drawdown_pct", 10.0)),
+            max_total_exposure_pct=float(os.getenv("MAX_TOTAL_EXPOSURE_PCT") or yaml_risk.get("max_total_exposure_pct", 80.0)),
+            max_leverage=float(os.getenv("MAX_LEVERAGE") or yaml_risk.get("max_leverage", 3.0)),
+            max_per_position_risk_pct=float(os.getenv("MAX_PER_POSITION_RISK_PCT") or yaml_risk.get("max_per_position_risk_pct", 2.0)),
+            max_correlated_exposure_pct=float(os.getenv("MAX_CORRELATED_EXPOSURE_PCT") or yaml_risk.get("max_correlated_exposure_pct", 30.0)),
+            min_ev_bps=float(os.getenv("MIN_EV_BPS") or yaml_risk.get("min_ev_bps", 10.0)),
+            cooldown_bars=int(os.getenv("COOLDOWN_BARS") or yaml_risk.get("cooldown_bars", 5)),
         ),
         short=ShortConfig(
-            allow_shorts=os.getenv("ALLOW_SHORTS", "true").lower() == "true",
-            prefer_futures=os.getenv("SHORT_PREFER_FUTURES", "true").lower() == "true",
-            require_futures_for_short=os.getenv("REQUIRE_FUTURES_FOR_SHORT", "true").lower() == "true",
+            allow_shorts=_bool_env("ALLOW_SHORTS", "true"),
+            prefer_futures=_bool_env("SHORT_PREFER_FUTURES", "true"),
+            require_futures_for_short=_bool_env("REQUIRE_FUTURES_FOR_SHORT", "true"),
             funding_rate_per_8h=float(os.getenv("FUNDING_RATE_PER_8H", "0.0001")),
             borrow_rate_per_hour=float(os.getenv("BORROW_RATE_PER_HOUR", "0.00003")),
             expected_holding_hours=float(os.getenv("EXPECTED_HOLDING_HOURS", "24.0")),
         ),
     )
-
-    # Overlay YAML if present
-    if _DEFAULT_CONFIG_PATH.exists():
-        try:
-            with open(_DEFAULT_CONFIG_PATH) as fh:
-                data = yaml.safe_load(fh) or {}
-            if "risk" in data:
-                for k, v in data["risk"].items():
-                    if hasattr(cfg.risk, k):
-                        setattr(cfg.risk, k, float(v))
-            for k in ("mode", "db_type", "db_url", "log_level"):
-                if k in data:
-                    setattr(cfg, k, str(data[k]))
-        except Exception:
-            logger.warning("Failed to read config.yaml, using env/defaults", exc_info=True)
-    else:
-        _generate_default_yaml()
 
     _setup_logging(cfg.log_level)
     return cfg
