@@ -168,7 +168,7 @@ class TestPaperMode:
         with patch("kucoin_bot.__main__.KuCoinClient", return_value=mock_client), \
              patch("kucoin_bot.__main__.MarketDataService", return_value=mock_mds), \
              patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("kucoin_bot.__main__.init_db", return_value=mock_session_factory):
+             patch("kucoin_bot.models.init_db", return_value=mock_session_factory):
             try:
                 await run_live(cfg)
             except asyncio.CancelledError:
