@@ -16,7 +16,7 @@ from kucoin_bot.services.market_data import MarketDataService
 from kucoin_bot.services.signal_engine import SignalEngine
 from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
 from kucoin_bot.services.portfolio import PortfolioManager
-from kucoin_bot.services.execution import ExecutionEngine, OrderRequest
+from kucoin_bot.services.execution import ExecutionEngine, OrderRequest, OrderResult
 from kucoin_bot.strategies.base import BaseStrategy
 from kucoin_bot.strategies.trend import TrendFollowing
 from kucoin_bot.strategies.mean_reversion import MeanReversion
@@ -24,7 +24,7 @@ from kucoin_bot.strategies.volatility_breakout import VolatilityBreakout
 from kucoin_bot.strategies.scalping import Scalping
 from kucoin_bot.strategies.hedge import HedgeMode
 from kucoin_bot.strategies.risk_off import RiskOff
-from kucoin_bot.backtest.engine import BacktestEngine
+from kucoin_bot.backtest.engine import BacktestEngine, DEFAULT_TAKER_FEE, DEFAULT_SLIPPAGE_BPS
 from kucoin_bot.reporting.cli import print_dashboard
 
 logger = logging.getLogger(__name__)
@@ -59,12 +59,23 @@ def _build_strategies() -> list[BaseStrategy]:
 
 
 async def run_live(cfg: BotConfig) -> None:
-    """Main live trading loop."""
+    """Main live trading loop (also handles PAPER and SHADOW modes)."""
     print(DISCLAIMER)
+
+    is_paper = cfg.is_paper
+    is_shadow = cfg.is_shadow
+    mode_label = cfg.mode.upper()
 
     if not cfg.api_key or not cfg.api_secret:
         logger.error("API credentials not set. Set KUCOIN_API_KEY, KUCOIN_API_SECRET, KUCOIN_API_PASSPHRASE.")
         return
+
+    if is_shadow:
+        logger.info("SHADOW mode: signals will be computed and logged; NO orders will be placed.")
+    elif is_paper:
+        logger.info("PAPER mode: simulated fills using live market data; NO real orders.")
+    else:
+        logger.info("LIVE mode: real orders will be placed.")
 
     # Initialize
     db_session_factory = init_db(cfg.db_url)
@@ -82,7 +93,7 @@ async def run_live(cfg: BotConfig) -> None:
     try:
         balance = await client.get_account_balance("USDT")
         risk_mgr.update_equity(balance)
-        logger.info("Connected. USDT balance: %.2f", balance)
+        logger.info("[%s] Connected. USDT balance: %.2f", mode_label, balance)
     except Exception:
         logger.error("Failed to connect to KuCoin API", exc_info=True)
         await client.close()
@@ -104,14 +115,24 @@ async def run_live(cfg: BotConfig) -> None:
         except NotImplementedError:
             pass
 
-    logger.info("Starting live trading loop with %d strategies", len(strategies))
+    # Cooldown tracking: symbol → last entry cycle index.
+    # Each cycle is 60 seconds; default klines are 1-hour bars.
+    # Scale cooldown_bars → cycles: 1 bar (1 hour) = 60 cycles.
+    last_entry_cycle: dict[str, int] = {}
+    cooldown_cycles = cfg.risk.cooldown_bars * 60  # convert bars to 60-second cycles
+
+    logger.info(
+        "Starting %s loop with %d strategies | EV gate: %.0f bps | cooldown: %d bars",
+        mode_label, len(strategies), cfg.risk.min_ev_bps, cooldown_cycles,
+    )
     cycle = 0
 
     while not stop_event.is_set():
         # Check kill switch
         if cfg.kill_switch or os.getenv("KILL_SWITCH", "false").lower() == "true":
             logger.critical("KILL SWITCH activated – cancelling all orders and flattening positions")
-            await exec_engine.cancel_all()
+            if not is_shadow and not is_paper:
+                await exec_engine.cancel_all()
             for sym, pos in list(risk_mgr.positions.items()):
                 if pos.size > 0:
                     close_price = pos.current_price or pos.entry_price
@@ -119,9 +140,10 @@ async def run_live(cfg: BotConfig) -> None:
                         logger.error("No price for %s, cannot flatten", sym)
                         continue
                     try:
-                        await exec_engine.flatten_position(
-                            sym, pos.size, close_price, pos.side,
-                        )
+                        if not is_shadow and not is_paper:
+                            await exec_engine.flatten_position(
+                                sym, pos.size, close_price, pos.side,
+                            )
                         risk_mgr.update_position(sym, PositionInfo(symbol=sym, side=pos.side, size=0))
                     except Exception:
                         logger.error("Failed to flatten %s", sym, exc_info=True)
@@ -145,6 +167,9 @@ async def run_live(cfg: BotConfig) -> None:
 
                     signals = signal_engine.compute(sym, klines)
                     market = market_data.get_info(sym)
+
+                    if cfg.live_diagnostic:
+                        logger.debug("[DIAG] %s signals: %s", sym, signals.to_dict())
 
                     # Portfolio allocation
                     allocs = portfolio_mgr.compute_allocations(
@@ -185,56 +210,156 @@ async def run_live(cfg: BotConfig) -> None:
                         ))
                         session.commit()
 
-                    # Execute
+                    # EV gate: same gate applied in both backtest and live
                     if decision.action.startswith("entry_"):
+                        cost_bps = (DEFAULT_TAKER_FEE * 2) * 10_000 + DEFAULT_SLIPPAGE_BPS * 2 + cfg.risk.min_ev_bps
+                        expected_bps = signals.volatility * 100.0 * signals.confidence
+                        if expected_bps < cost_bps:
+                            if cfg.live_diagnostic:
+                                logger.debug(
+                                    "[EV-GATE] Blocked %s: expected %.1f bps < cost %.1f bps",
+                                    sym, expected_bps, cost_bps,
+                                )
+                            continue
+
+                    # Cooldown: enforce minimum bars between entries
+                    if decision.action.startswith("entry_") and not pos:
+                        last_cycle = last_entry_cycle.get(sym, 0)
+                        if cycle - last_cycle < cooldown_cycles:
+                            continue
+
+                    # Compute notional early so it can be included in the correlated
+                    # exposure check below (pending entry not yet in risk_mgr.positions).
+                    if decision.action.startswith("entry_") and not pos:
                         notional = risk_mgr.compute_position_size(
                             sym, market.last_price if market else 0, signals.volatility, signals
                         )
+                    else:
+                        notional = 0.0
+
+                    # Correlated exposure check: group symbols by base asset.
+                    # Prospective notional is included to prevent same-cycle bypass.
+                    if decision.action.startswith("entry_") and not pos:
+                        if notional <= 0:
+                            continue
+                        base = market.base if market else sym.split("-")[0]
+                        correlated = [s for s in risk_mgr.positions if s.startswith(base + "-")]
+                        if sym not in correlated:
+                            correlated.append(sym)
+                        if risk_mgr.check_correlated_exposure(
+                            correlated, prospective_notional=notional * alloc.weight
+                        ):
+                            logger.warning("Correlated exposure limit reached for base %s, skipping %s", base, sym)
+                            continue
+
+                    # Execute
+                    if decision.action.startswith("entry_"):
                         if notional > 0:
                             side = "buy" if "long" in decision.action else "sell"
-                            result = await exec_engine.execute(
-                                OrderRequest(
-                                    symbol=sym,
-                                    side=side,
-                                    notional=notional * alloc.weight,
-                                    order_type=decision.order_type,
-                                    price=market.last_price if market else None,
-                                    leverage=alloc.max_leverage,
-                                    reason=decision.reason,
-                                ),
-                                market,
-                            )
-                            if result.success and result.filled_qty > 0:
-                                pos_side = "long" if "long" in decision.action else "short"
-                                risk_mgr.update_position(sym, PositionInfo(
-                                    symbol=sym,
-                                    side=pos_side,
-                                    size=result.filled_qty,
-                                    entry_price=result.avg_price,
-                                    current_price=result.avg_price,
-                                    leverage=alloc.max_leverage,
-                                ))
+                            trade_notional = notional * alloc.weight
+
+                            if is_shadow:
+                                logger.info(
+                                    "[SHADOW] Would %s %s notional=%.2f @ %.4f reason=%s",
+                                    side, sym, trade_notional,
+                                    market.last_price if market else 0, decision.reason,
+                                )
+                            elif is_paper:
+                                # Simulate fill: use last price with taker slippage and taker fee.
+                                # No real API call is made – paper mode only.
+                                last_px = market.last_price if market else 0
+                                slip_dir = 1 if side == "buy" else -1
+                                fill_px = last_px * (1 + slip_dir * DEFAULT_SLIPPAGE_BPS / 10_000) if last_px > 0 else 0
+                                if fill_px > 0:
+                                    filled_qty = trade_notional / fill_px
+                                    paper_fee = filled_qty * fill_px * DEFAULT_TAKER_FEE
+                                    risk_mgr.update_equity(risk_mgr.current_equity - paper_fee)
+                                    result = OrderResult(
+                                        success=True,
+                                        order_id=f"paper-{sym}-{cycle}",
+                                        filled_qty=filled_qty,
+                                        avg_price=fill_px,
+                                        message="paper_fill",
+                                    )
+                                    logger.info(
+                                        "[PAPER] Simulated %s %s qty=%.6f @ %.4f fee=%.4f",
+                                        side, sym, filled_qty, fill_px, paper_fee,
+                                    )
+                                    pos_side = "long" if "long" in decision.action else "short"
+                                    risk_mgr.update_position(sym, PositionInfo(
+                                        symbol=sym,
+                                        side=pos_side,
+                                        size=result.filled_qty,
+                                        entry_price=result.avg_price,
+                                        current_price=result.avg_price,
+                                        leverage=alloc.max_leverage,
+                                    ))
+                                    last_entry_cycle[sym] = cycle
+                            else:
+                                result = await exec_engine.execute(
+                                    OrderRequest(
+                                        symbol=sym,
+                                        side=side,
+                                        notional=trade_notional,
+                                        order_type=decision.order_type,
+                                        price=market.last_price if market else None,
+                                        leverage=alloc.max_leverage,
+                                        reason=decision.reason,
+                                    ),
+                                    market,
+                                )
+                                if result.success and result.filled_qty > 0:
+                                    pos_side = "long" if "long" in decision.action else "short"
+                                    risk_mgr.update_position(sym, PositionInfo(
+                                        symbol=sym,
+                                        side=pos_side,
+                                        size=result.filled_qty,
+                                        entry_price=result.avg_price,
+                                        current_price=result.avg_price,
+                                        leverage=alloc.max_leverage,
+                                    ))
+                                    last_entry_cycle[sym] = cycle
+
                     elif decision.action == "exit":
                         if pos:
                             side = "sell" if pos.side == "long" else "buy"
-                            result = await exec_engine.execute(
-                                OrderRequest(
-                                    symbol=sym,
-                                    side=side,
-                                    notional=abs(pos.size * pos.current_price),
-                                    order_type=decision.order_type,
-                                    reason=decision.reason,
-                                ),
-                                market,
-                            )
-                            if result.success:
-                                pnl = (result.avg_price - pos.entry_price) * pos.size
+
+                            if is_shadow:
+                                logger.info("[SHADOW] Would exit %s side=%s", sym, pos.side)
+                            elif is_paper:
+                                # Simulate exit fill with taker slippage and taker fee.
+                                # No real API call is made – paper mode only.
+                                last_px = market.last_price if market else 0
+                                slip_dir = 1 if side == "buy" else -1
+                                fill_px = last_px * (1 + slip_dir * DEFAULT_SLIPPAGE_BPS / 10_000) if last_px > 0 else pos.entry_price
+                                paper_fee = pos.size * fill_px * DEFAULT_TAKER_FEE
+                                pnl = (fill_px - pos.entry_price) * pos.size - paper_fee
                                 if pos.side == "short":
-                                    pnl = -pnl
+                                    pnl = -((fill_px - pos.entry_price) * pos.size) - paper_fee
                                 risk_mgr.record_pnl(pnl)
                                 risk_mgr.update_position(sym, PositionInfo(
                                     symbol=sym, side=pos.side, size=0,
                                 ))
+                                logger.info("[PAPER] Simulated exit %s pnl=%.4f fee=%.4f", sym, pnl, paper_fee)
+                            else:
+                                result = await exec_engine.execute(
+                                    OrderRequest(
+                                        symbol=sym,
+                                        side=side,
+                                        notional=abs(pos.size * pos.current_price),
+                                        order_type=decision.order_type,
+                                        reason=decision.reason,
+                                    ),
+                                    market,
+                                )
+                                if result.success:
+                                    pnl = (result.avg_price - pos.entry_price) * pos.size
+                                    if pos.side == "short":
+                                        pnl = -pnl
+                                    risk_mgr.record_pnl(pnl)
+                                    risk_mgr.update_position(sym, PositionInfo(
+                                        symbol=sym, side=pos.side, size=0,
+                                    ))
 
                 except Exception:
                     logger.error("Error processing %s", sym, exc_info=True)
@@ -291,9 +416,17 @@ def main() -> None:
     if cfg.mode.upper() == "BACKTEST":
         run_backtest(cfg)
     elif cfg.mode.upper() == "LIVE":
+        if not cfg.live_trading:
+            print(
+                "ERROR: LIVE_TRADING=true is required to start in LIVE mode.\n"
+                "Set the environment variable LIVE_TRADING=true to confirm you understand real money is at risk."
+            )
+            sys.exit(1)
+        asyncio.run(run_live(cfg))
+    elif cfg.mode.upper() in ("PAPER", "SHADOW"):
         asyncio.run(run_live(cfg))
     else:
-        print(f"Unknown mode: {cfg.mode}. Use LIVE or BACKTEST.")
+        print(f"Unknown mode: {cfg.mode}. Use LIVE, PAPER, SHADOW, or BACKTEST.")
         sys.exit(1)
 
 

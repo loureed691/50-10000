@@ -94,3 +94,50 @@ class TestRiskManager:
         rm.reset_daily()
         assert rm.daily_pnl == 0.0
         assert rm.circuit_breaker_active is True
+
+    def test_correlated_exposure_below_limit(self):
+        rm = self._make_risk_mgr(10_000)
+        rm.positions["BTC-USDT"] = PositionInfo(
+            symbol="BTC-USDT", side="long", size=0.03, current_price=30_000, leverage=1.0
+        )
+        # 0.03 * 30_000 = 900 USDT = 9% exposure (well under 30%)
+        assert rm.check_correlated_exposure(["BTC-USDT", "BTC-PERP"]) is False
+
+    def test_correlated_exposure_exceeds_limit(self):
+        rm = self._make_risk_mgr(10_000)
+        rm.positions["BTC-USDT"] = PositionInfo(
+            symbol="BTC-USDT", side="long", size=0.1, current_price=30_000, leverage=1.0
+        )
+        # 0.1 * 30_000 = 3_000 USDT = 30% → at the limit (limit is >=30, so True)
+        assert rm.check_correlated_exposure(["BTC-USDT"]) is True
+
+    def test_correlated_exposure_multiple_symbols(self):
+        rm = self._make_risk_mgr(10_000)
+        rm.positions["BTC-USDT"] = PositionInfo(
+            symbol="BTC-USDT", side="long", size=0.05, current_price=30_000, leverage=1.0
+        )
+        rm.positions["BTC-PERP"] = PositionInfo(
+            symbol="BTC-PERP", side="long", size=0.05, current_price=30_000, leverage=1.0
+        )
+        # 0.05 * 30_000 + 0.05 * 30_000 = 3_000 = 30% → at limit
+        correlated = ["BTC-USDT", "BTC-PERP"]
+        assert rm.check_correlated_exposure(correlated) is True
+
+    def test_correlated_exposure_empty_positions(self):
+        rm = self._make_risk_mgr(10_000)
+        assert rm.check_correlated_exposure(["BTC-USDT", "BTC-PERP"]) is False
+
+    def test_correlated_exposure_prospective_notional_blocks_entry(self):
+        """prospective_notional must be included so same-cycle entries can't bypass the limit."""
+        rm = self._make_risk_mgr(10_000)
+        # No existing positions, but a 3000 USDT pending entry = 30% → should be blocked
+        assert rm.check_correlated_exposure(["BTC-USDT"], prospective_notional=3_000) is True
+
+    def test_correlated_exposure_prospective_notional_allows_small_entry(self):
+        """A small pending entry that keeps exposure under limit should not be blocked."""
+        rm = self._make_risk_mgr(10_000)
+        rm.positions["BTC-USDT"] = PositionInfo(
+            symbol="BTC-USDT", side="long", size=0.03, current_price=30_000, leverage=1.0
+        )
+        # Existing: 900 USDT (9%). Prospective: 500 USDT (5%). Total 14% < 30% → False
+        assert rm.check_correlated_exposure(["BTC-USDT"], prospective_notional=500) is False
