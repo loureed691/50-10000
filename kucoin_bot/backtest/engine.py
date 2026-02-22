@@ -265,8 +265,11 @@ class BacktestEngine:
                 holding_bars += 1
 
                 # Futures funding: paid every 8 bars (1-hour bars → every 8 hours)
+                # Positive rate: longs pay, shorts receive. Negative rate: the reverse.
                 if is_futures and holding_bars % 8 == 0:
                     funding = position_size * entry_price * cost_model.funding_rate_per_8h
+                    if position_side == "short":
+                        funding = -funding  # shorts receive when rate is positive, pay when negative
                     equity -= funding
                     total_funding_cost += funding
 
@@ -318,13 +321,15 @@ class BacktestEngine:
             # ---- STEP 6: EV gate – only trade when expected edge exceeds round-trip cost ----
             if decision.action.startswith("entry_") and not position_side:
                 order_type_str = "taker" if decision.order_type == "market" else "maker"
-                is_margin_short = is_margin and "short" in decision.action
+                proposed_side = "long" if "long" in decision.action else "short"
+                is_margin_short = is_margin and proposed_side == "short"
                 costs = cost_model.estimate(
                     order_type=order_type_str,
                     holding_hours=24.0,  # conservative expected holding
                     is_futures=is_futures,
                     is_margin_short=is_margin_short,
                     live_funding_rate=signals.funding_rate if signals.funding_rate != 0 else None,
+                    position_side=proposed_side,
                 )
                 expected_bps = signals.volatility * 100.0 * signals.confidence
                 if not cost_model.ev_gate(expected_bps, costs):

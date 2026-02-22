@@ -82,6 +82,7 @@ class CostModel:
         is_futures: bool = False,
         is_margin_short: bool = False,
         live_funding_rate: float | None = None,
+        position_side: str | None = None,
     ) -> TradeCosts:
         """Estimate full round-trip costs in basis points.
 
@@ -92,6 +93,14 @@ class CostModel:
             is_margin_short: If True, add margin borrow interest cost.
             live_funding_rate: Override the default per-8-hour funding rate (as
                 a decimal fraction, e.g. 0.0001 for 0.01 %).
+            position_side: ``"long"`` or ``"short"``.  When provided, funding is
+                applied directionally:
+
+                * Positive rate → longs **pay**, shorts **receive** (negative cost).
+                * Negative rate → longs **receive** (negative cost), shorts **pay**.
+
+                When ``None`` (default), ``abs(rate)`` is used as a conservative
+                worst-case estimate independent of direction.
         """
         fee_rate = self.taker_fee if order_type == "taker" else self.maker_fee
         fee_bps = fee_rate * 2 * 10_000           # round-trip (entry + exit)
@@ -101,7 +110,13 @@ class CostModel:
         if is_futures:
             rate = live_funding_rate if live_funding_rate is not None else self.funding_rate_per_8h
             periods = holding_hours / 8.0
-            funding_bps = abs(rate) * periods * 10_000
+            if position_side is None:
+                # Conservative: treat funding as a cost regardless of direction
+                funding_bps = abs(rate) * periods * 10_000
+            else:
+                # Directional: positive rate means longs pay, shorts receive
+                signed = rate * periods * 10_000
+                funding_bps = signed if position_side == "long" else -signed
 
         borrow_bps = 0.0
         if is_margin_short:

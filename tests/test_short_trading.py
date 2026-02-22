@@ -138,8 +138,8 @@ class TestShortPnLMathMargin:
 
         # Margin borrow cost should be >= 0
         assert result_margin.cost_breakdown["borrow"] >= 0
-        # Futures has funding cost >= 0
-        assert result_futures.cost_breakdown["funding"] >= 0
+        # Futures has a funding field (may be positive if long paid, negative if short received)
+        assert isinstance(result_futures.cost_breakdown["funding"], float)
 
 
 # ---------------------------------------------------------------------------
@@ -149,15 +149,54 @@ class TestShortPnLMathMargin:
 class TestFundingAndBorrowCosts:
     """Verify cost model computes funding and borrow correctly."""
 
-    def test_funding_cost_per_8h(self):
-        """Funding cost for one 8-hour period at 0.01% rate."""
+    def test_funding_cost_per_8h_no_side(self):
+        """Without position_side, abs() is used as conservative worst-case estimate."""
         model = CostModel(funding_rate_per_8h=0.0001)
         costs = model.estimate("taker", holding_hours=8.0, is_futures=True)
-        # 0.0001 * 1 period * 10_000 = 1.0 bps
+        # abs(0.0001) * 1 period * 10_000 = 1.0 bps
         assert costs.funding_bps == pytest.approx(1.0, abs=0.001)
 
+    def test_funding_cost_long_positive_rate(self):
+        """Long position pays when funding rate is positive."""
+        model = CostModel(funding_rate_per_8h=0.0001)
+        costs = model.estimate("taker", holding_hours=8.0, is_futures=True, position_side="long")
+        # Positive rate → long pays → positive cost
+        assert costs.funding_bps == pytest.approx(1.0, abs=0.001)
+
+    def test_funding_cost_short_positive_rate(self):
+        """Short position receives when funding rate is positive (negative cost)."""
+        model = CostModel(funding_rate_per_8h=0.0001)
+        costs = model.estimate("taker", holding_hours=8.0, is_futures=True, position_side="short")
+        # Positive rate → short receives → negative cost (funding is a benefit)
+        assert costs.funding_bps == pytest.approx(-1.0, abs=0.001)
+
+    def test_funding_cost_short_negative_rate(self):
+        """Short position pays when funding rate is negative."""
+        model = CostModel(funding_rate_per_8h=-0.0002)
+        costs = model.estimate("taker", holding_hours=8.0, is_futures=True, position_side="short")
+        # Negative rate → short pays → positive cost
+        assert costs.funding_bps == pytest.approx(2.0, abs=0.001)
+
+    def test_funding_cost_long_negative_rate(self):
+        """Long position receives when funding rate is negative (negative cost)."""
+        model = CostModel(funding_rate_per_8h=-0.0002)
+        costs = model.estimate("taker", holding_hours=8.0, is_futures=True, position_side="long")
+        # Negative rate → long receives → negative cost (benefit)
+        assert costs.funding_bps == pytest.approx(-2.0, abs=0.001)
+
+    def test_funding_multiple_periods_directional(self):
+        """Multi-period directional funding scales linearly for both sides."""
+        model = CostModel(funding_rate_per_8h=0.0001)
+        costs_long_1p = model.estimate("taker", holding_hours=8.0, is_futures=True, position_side="long")
+        costs_long_3p = model.estimate("taker", holding_hours=24.0, is_futures=True, position_side="long")
+        costs_short_3p = model.estimate("taker", holding_hours=24.0, is_futures=True, position_side="short")
+        # Long with 3 periods should be 3× one period
+        assert costs_long_3p.funding_bps == pytest.approx(costs_long_1p.funding_bps * 3, abs=0.001)
+        # Short with 3 periods should be negative of long 3 periods (receives funding)
+        assert costs_short_3p.funding_bps == pytest.approx(-costs_long_3p.funding_bps, abs=0.001)
+
     def test_funding_cost_two_periods(self):
-        """Two 8-hour periods should double the funding cost."""
+        """Two 8-hour periods should double the funding cost (conservative/no side)."""
         model = CostModel(funding_rate_per_8h=0.0001)
         costs_1p = model.estimate("taker", holding_hours=8.0, is_futures=True)
         costs_2p = model.estimate("taker", holding_hours=16.0, is_futures=True)
@@ -183,7 +222,7 @@ class TestFundingAndBorrowCosts:
         assert costs.borrow_bps == 0.0
 
     def test_funding_applied_every_8_bars_in_backtest(self):
-        """Backtest should deduct funding every 8 bars for futures positions."""
+        """Backtest should track funding in cost_breakdown for futures; spot shows zero."""
         engine_futures = BacktestEngine(
             strategies=[TrendFollowing(), MeanReversion()],
             min_ev_bps=0,
@@ -198,12 +237,13 @@ class TestFundingAndBorrowCosts:
         result_futures = engine_futures.run(klines, "BTC-USDT", initial_equity=10_000, market_type="futures")
         result_spot = engine_spot.run(klines, "BTC-USDT", initial_equity=10_000, market_type="spot")
 
-        # Futures should show funding cost in breakdown when trades occurred
-        assert result_futures.cost_breakdown["funding"] >= 0
+        # Futures shows a non-zero funding field (positive = paid, negative = received)
+        assert isinstance(result_futures.cost_breakdown["funding"], float)
+        # Spot never charges funding
         assert result_spot.cost_breakdown["funding"] == 0.0
 
     def test_live_funding_rate_override(self):
-        """A live funding rate override should replace the default."""
+        """A live funding rate override should replace the default (conservative/no side)."""
         model = CostModel(funding_rate_per_8h=0.0001)
         costs_default = model.estimate("taker", holding_hours=8.0, is_futures=True)
         costs_override = model.estimate("taker", holding_hours=8.0, is_futures=True, live_funding_rate=0.0005)

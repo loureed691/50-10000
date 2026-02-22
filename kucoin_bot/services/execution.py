@@ -97,7 +97,7 @@ class ExecutionEngine:
                     result = await self.client.place_futures_order(
                         symbol=req.symbol,
                         side=req.side,
-                        size=int(size),
+                        size=round(size),
                         leverage=req.leverage,
                         order_type=order_type,
                         price=price if order_type == "limit" else None,

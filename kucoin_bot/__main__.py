@@ -253,13 +253,15 @@ async def run_live(cfg: BotConfig) -> None:
                     if decision.action.startswith("entry_"):
                         mkt_type = market.market_type if market else "spot"
                         is_futures = mkt_type == "futures"
-                        is_margin_short = mkt_type == "margin" and "short" in decision.action
+                        proposed_side_ev = "long" if "long" in decision.action else "short"
+                        is_margin_short = mkt_type == "margin" and proposed_side_ev == "short"
                         costs = cost_model.estimate(
                             order_type="taker",
                             holding_hours=cfg.short.expected_holding_hours,
                             is_futures=is_futures,
                             is_margin_short=is_margin_short,
                             live_funding_rate=signals.funding_rate if signals.funding_rate != 0 else None,
+                            position_side=proposed_side_ev,
                         )
                         expected_bps = signals.volatility * 100.0 * signals.confidence
                         if not cost_model.ev_gate(expected_bps, costs):
@@ -411,7 +413,12 @@ async def run_live(cfg: BotConfig) -> None:
                                     risk_mgr.update_position(sym, PositionInfo(
                                         symbol=sym, side=pos.side, size=0,
                                     ))
-                                    strategy_monitor.record_trade(alloc.strategy, pnl)
+                                    # Estimate exit fee from fill to track net expectancy
+                                    trade_cost = (
+                                        pos.size * result.avg_price * DEFAULT_TAKER_FEE
+                                        if result.avg_price > 0 else 0.0
+                                    )
+                                    strategy_monitor.record_trade(alloc.strategy, pnl, trade_cost)
 
                 except Exception:
                     logger.error("Error processing %s", sym, exc_info=True)
