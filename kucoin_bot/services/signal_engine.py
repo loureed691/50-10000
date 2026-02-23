@@ -93,11 +93,12 @@ class SignalEngine:
             # dampen when volume is below average (anomaly < 0).
             vol_weight = 1.0
             if len(volumes) > 20 and np.std(volumes[:-1]) > 0:
-                recent_vol_z = float(
-                    (np.mean(volumes[-5:]) - np.mean(volumes[:-5]))
-                    / np.std(volumes[:-5])
-                ) if len(volumes) > 10 and np.std(volumes[:-5]) > 0 else 0.0
-                vol_weight = float(np.clip(0.5 + recent_vol_z * 0.25, 0.5, 1.5))
+                vol_std = float(np.std(volumes[:-5]))
+                if vol_std > 0:
+                    recent_vol_z = float(
+                        (np.mean(volumes[-5:]) - np.mean(volumes[:-5])) / vol_std
+                    )
+                    vol_weight = float(np.clip(0.5 + recent_vol_z * 0.25, 0.5, 1.5))
             scores.momentum = float(np.clip(raw_momentum * vol_weight, -1, 1))
 
         # --- Trend strength (ADX-like via directional movement) ---

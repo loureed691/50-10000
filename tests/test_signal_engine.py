@@ -126,8 +126,8 @@ class TestSignalEngine:
             "TEST-USDT", klines,
             orderbook={"bids": [["100", "100"]], "asks": [["100", "10"]]},
         )
-        # Confidence should be at least as high when orderbook agrees
-        assert scores_ob.confidence >= scores_no_ob.confidence - 0.01
+        # Confidence should be higher when orderbook agrees with momentum
+        assert scores_ob.confidence > scores_no_ob.confidence
 
     def test_volume_weighted_momentum(self):
         """High-volume moves should produce stronger momentum than low-volume."""
