@@ -8,13 +8,14 @@ import logging
 import os
 import signal
 import sys
+import time
 
 from kucoin_bot.config import load_config, BotConfig
 from kucoin_bot.api.client import KuCoinClient
 from kucoin_bot.services.market_data import MarketDataService
 from kucoin_bot.services.signal_engine import SignalEngine
 from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
-from kucoin_bot.services.portfolio import PortfolioManager
+from kucoin_bot.services.portfolio import PortfolioManager, AllocationTarget
 from kucoin_bot.services.execution import ExecutionEngine, OrderRequest, OrderResult
 from kucoin_bot.services.cost_model import CostModel
 from kucoin_bot.services.side_selector import SideSelector
@@ -58,6 +59,45 @@ STRATEGY_MAP: dict[str, type[BaseStrategy]] = {
 
 def _build_strategies() -> list[BaseStrategy]:
     return [cls() for cls in STRATEGY_MAP.values()]
+
+
+async def _compute_total_equity(
+    client: KuCoinClient,
+    market_data: "MarketDataService",
+) -> float:
+    """Return total portfolio equity in USDT by summing all asset balances.
+
+    Non-USDT assets are converted to USDT using available market prices.
+    Falls back to 0.0 if the accounts endpoint is unavailable.
+    """
+    try:
+        accounts = await client.get_accounts("trade")
+        total = 0.0
+        for acc in accounts:
+            currency = acc.get("currency", "")
+            balance = float(acc.get("balance", 0) or 0)
+            if balance <= 0:
+                continue
+            if currency == "USDT":
+                total += balance
+            else:
+                # Convert asset to USDT via cached market price
+                sym = f"{currency}-USDT"
+                info = market_data.get_info(sym)
+                price = info.last_price if info and info.last_price > 0 else 0.0
+                if price <= 0:
+                    # Fallback: fetch ticker directly
+                    try:
+                        ticker = await client.get_ticker(sym)
+                        price = float(ticker.get("price", 0) or 0)
+                    except Exception:
+                        pass
+                if price > 0:
+                    total += balance * price
+        return total
+    except Exception:
+        logger.error("Failed to compute total portfolio equity", exc_info=True)
+        return 0.0
 
 
 async def run_live(cfg: BotConfig) -> None:
@@ -120,6 +160,12 @@ async def run_live(cfg: BotConfig) -> None:
     # Discover markets
     await market_data.refresh_universe()
 
+    # Now compute full portfolio equity (all assets converted to USDT)
+    total_equity = await _compute_total_equity(client, market_data)
+    if total_equity > 0:
+        risk_mgr.update_equity(total_equity)
+        logger.info("[%s] Total portfolio equity: %.2f USDT", mode_label, total_equity)
+
     # Kill switch handler
     stop_event = asyncio.Event()
 
@@ -138,6 +184,9 @@ async def run_live(cfg: BotConfig) -> None:
     # Scale cooldown_bars → cycles: 1 bar (1 hour) = 60 cycles.
     last_entry_cycle: dict[str, int] = {}
     cooldown_cycles = cfg.risk.cooldown_bars * 60  # convert bars to 60-second cycles
+
+    # Daily reset tracking (UTC date string)
+    last_reset_day: str = time.strftime("%Y-%m-%d", time.gmtime())
 
     logger.info(
         "Starting %s loop with %d strategies | EV gate: %.0f bps | cooldown: %d bars",
@@ -169,11 +218,19 @@ async def run_live(cfg: BotConfig) -> None:
 
         cycle += 1
         try:
-            # Refresh universe periodically
+            # Daily PnL / circuit-breaker reset at UTC midnight
+            current_day = time.strftime("%Y-%m-%d", time.gmtime())
+            if current_day != last_reset_day:
+                risk_mgr.reset_daily()
+                last_reset_day = current_day
+                logger.info("Daily PnL reset. New day: %s", current_day)
+
+            # Refresh universe and full portfolio equity periodically
             if cycle % 60 == 1:
                 await market_data.refresh_universe()
-                balance = await client.get_account_balance("USDT")
-                risk_mgr.update_equity(balance)
+                total_equity = await _compute_total_equity(client, market_data)
+                if total_equity > 0:
+                    risk_mgr.update_equity(total_equity)
 
             # Process each pair
             active_strategies: dict[str, str] = {}
@@ -189,13 +246,23 @@ async def run_live(cfg: BotConfig) -> None:
                     if cfg.live_diagnostic:
                         logger.debug("[DIAG] %s signals: %s", sym, signals.to_dict())
 
+                    # Get existing position before any gates so exits can always be evaluated
+                    pos = risk_mgr.positions.get(sym)
+
+                    # Update position's current price for accurate risk calculations
+                    if pos and market and market.last_price > 0:
+                        pos.current_price = market.last_price
+
                     # Portfolio allocation
                     allocs = portfolio_mgr.compute_allocations(
                         {sym: signals}, [sym]
                     )
                     alloc = allocs.get(sym)
                     if not alloc or alloc.weight <= 0:
-                        continue
+                        if not pos:
+                            continue
+                        # Open position with zero allocation – fall back to risk_off to evaluate exit
+                        alloc = AllocationTarget(symbol=sym, weight=0.0, strategy="risk_off")
 
                     active_strategies[sym] = alloc.strategy
 
@@ -206,18 +273,23 @@ async def run_live(cfg: BotConfig) -> None:
                     strat = strat_cls()
 
                     if not strat.preconditions_met(signals):
-                        continue
+                        if not pos:
+                            continue
+                        # For existing positions bypass preconditions and allow exit via risk_off
+                        strat = RiskOff()
 
-                    # Check strategy monitor – skip if module auto-disabled
+                    # Check strategy monitor – skip if module auto-disabled;
+                    # still allow exits for open positions
                     if not strategy_monitor.is_enabled(alloc.strategy):
                         if cfg.live_diagnostic:
                             logger.debug(
                                 "[MONITOR] Skipping %s: module '%s' auto-disabled",
                                 sym, alloc.strategy,
                             )
-                        continue
+                        if not pos:
+                            continue
+                        strat = RiskOff()
 
-                    pos = risk_mgr.positions.get(sym)
                     decision = strat.evaluate(
                         signals,
                         pos.side if pos else None,
@@ -401,7 +473,10 @@ async def run_live(cfg: BotConfig) -> None:
                                     OrderRequest(
                                         symbol=sym,
                                         side=side,
-                                        notional=abs(pos.size * pos.current_price),
+                                        notional=abs(pos.size * (
+                                            pos.current_price if pos.current_price > 0
+                                            else pos.entry_price
+                                        )),
                                         order_type=decision.order_type,
                                         reason=decision.reason,
                                         reduce_only=is_futures_exit,

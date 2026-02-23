@@ -176,3 +176,102 @@ class TestPaperMode:
 
         # PAPER mode must never call the real exchange order API
         mock_client.place_order.assert_not_called()
+
+
+class TestComputeTotalEquity:
+    """Tests for _compute_total_equity – multi-asset portfolio valuation."""
+
+    @pytest.mark.asyncio
+    async def test_usdt_only(self):
+        """Only USDT balance → equity equals USDT amount."""
+        from kucoin_bot.__main__ import _compute_total_equity
+        from kucoin_bot.services.market_data import MarketDataService
+
+        client = MagicMock(spec=KuCoinClient)
+        client.get_accounts = AsyncMock(return_value=[
+            {"currency": "USDT", "balance": "5000", "available": "5000"},
+        ])
+
+        mds = MagicMock(spec=MarketDataService)
+        mds.get_info = MagicMock(return_value=None)
+
+        equity = await _compute_total_equity(client, mds)
+        assert equity == pytest.approx(5000.0)
+
+    @pytest.mark.asyncio
+    async def test_multi_asset(self):
+        """USDT + BTC + ETH combined via market prices."""
+        from kucoin_bot.__main__ import _compute_total_equity
+        from kucoin_bot.services.market_data import MarketDataService, MarketInfo
+
+        client = MagicMock(spec=KuCoinClient)
+        client.get_accounts = AsyncMock(return_value=[
+            {"currency": "USDT", "balance": "1000", "available": "1000"},
+            {"currency": "BTC", "balance": "0.5", "available": "0.5"},
+            {"currency": "ETH", "balance": "2", "available": "2"},
+        ])
+
+        btc_info = MarketInfo(symbol="BTC-USDT", base="BTC", quote="USDT", last_price=40_000.0)
+        eth_info = MarketInfo(symbol="ETH-USDT", base="ETH", quote="USDT", last_price=2_000.0)
+
+        def get_info(sym: str):
+            return {"BTC-USDT": btc_info, "ETH-USDT": eth_info}.get(sym)
+
+        mds = MagicMock(spec=MarketDataService)
+        mds.get_info = MagicMock(side_effect=get_info)
+
+        equity = await _compute_total_equity(client, mds)
+        # 1000 USDT + 0.5 BTC * 40000 + 2 ETH * 2000 = 1000 + 20000 + 4000 = 25000
+        assert equity == pytest.approx(25_000.0)
+
+    @pytest.mark.asyncio
+    async def test_zero_balance_skipped(self):
+        """Assets with zero balance must not affect total equity."""
+        from kucoin_bot.__main__ import _compute_total_equity
+        from kucoin_bot.services.market_data import MarketDataService
+
+        client = MagicMock(spec=KuCoinClient)
+        client.get_accounts = AsyncMock(return_value=[
+            {"currency": "USDT", "balance": "2000", "available": "2000"},
+            {"currency": "BTC", "balance": "0", "available": "0"},
+        ])
+
+        mds = MagicMock(spec=MarketDataService)
+        mds.get_info = MagicMock(return_value=None)
+
+        equity = await _compute_total_equity(client, mds)
+        assert equity == pytest.approx(2000.0)
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_ticker_when_no_market_info(self):
+        """Non-USDT asset falls back to live ticker when market_data has no price."""
+        from kucoin_bot.__main__ import _compute_total_equity
+        from kucoin_bot.services.market_data import MarketDataService
+
+        client = MagicMock(spec=KuCoinClient)
+        client.get_accounts = AsyncMock(return_value=[
+            {"currency": "USDT", "balance": "500", "available": "500"},
+            {"currency": "XRP", "balance": "1000", "available": "1000"},
+        ])
+        client.get_ticker = AsyncMock(return_value={"price": "0.5"})
+
+        mds = MagicMock(spec=MarketDataService)
+        mds.get_info = MagicMock(return_value=None)  # no cached info
+
+        equity = await _compute_total_equity(client, mds)
+        # 500 USDT + 1000 XRP * 0.5 = 500 + 500 = 1000
+        assert equity == pytest.approx(1000.0)
+
+    @pytest.mark.asyncio
+    async def test_api_error_returns_zero(self):
+        """API error in get_accounts must return 0.0 gracefully."""
+        from kucoin_bot.__main__ import _compute_total_equity
+        from kucoin_bot.services.market_data import MarketDataService
+
+        client = MagicMock(spec=KuCoinClient)
+        client.get_accounts = AsyncMock(side_effect=Exception("network error"))
+
+        mds = MagicMock(spec=MarketDataService)
+
+        equity = await _compute_total_equity(client, mds)
+        assert equity == 0.0
