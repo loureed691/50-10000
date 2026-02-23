@@ -102,7 +102,7 @@ async def _compute_total_equity(
 
 async def run_live(cfg: BotConfig) -> None:
     """Main live trading loop (also handles PAPER and SHADOW modes)."""
-    from kucoin_bot.models import init_db, SignalSnapshot  # requires sqlalchemy
+    from kucoin_bot.models import init_db, SignalSnapshot, PositionRecord  # requires sqlalchemy
     print(DISCLAIMER)
 
     is_paper = cfg.is_paper
@@ -147,6 +147,36 @@ async def run_live(cfg: BotConfig) -> None:
     strategy_monitor = StrategyMonitor()
     strategies = _build_strategies()
 
+    def _save_position(pos: PositionInfo) -> None:
+        """Upsert or delete a position in the DB for cross-session recovery."""
+        try:
+            with db_session_factory() as session:
+                existing = session.query(PositionRecord).filter_by(symbol=pos.symbol).first()
+                if pos.size <= 0:
+                    if existing:
+                        session.delete(existing)
+                else:
+                    if existing:
+                        existing.side = pos.side
+                        existing.size = pos.size
+                        existing.entry_price = pos.entry_price
+                        existing.current_price = pos.current_price
+                        existing.leverage = pos.leverage
+                        existing.account_type = pos.account_type
+                    else:
+                        session.add(PositionRecord(
+                            symbol=pos.symbol,
+                            side=pos.side,
+                            size=pos.size,
+                            entry_price=pos.entry_price,
+                            current_price=pos.current_price,
+                            leverage=pos.leverage,
+                            account_type=pos.account_type,
+                        ))
+                session.commit()
+        except Exception:
+            logger.error("Failed to persist position %s", pos.symbol, exc_info=True)
+
     # Validate API connectivity
     try:
         balance = await client.get_account_balance("USDT")
@@ -166,11 +196,30 @@ async def run_live(cfg: BotConfig) -> None:
         risk_mgr.update_equity(total_equity)
         logger.info("[%s] Total portfolio equity: %.2f USDT", mode_label, total_equity)
 
+    # Restore open positions from previous session
+    try:
+        with db_session_factory() as session:
+            prev_positions = session.query(PositionRecord).filter(PositionRecord.size > 0).all()
+            for rec in prev_positions:
+                risk_mgr.update_position(rec.symbol, PositionInfo(
+                    symbol=rec.symbol,
+                    side=rec.side,
+                    size=rec.size,
+                    entry_price=rec.entry_price,
+                    current_price=rec.current_price or rec.entry_price,
+                    leverage=rec.leverage,
+                    account_type=rec.account_type,
+                ))
+            if prev_positions:
+                logger.info("Restored %d open position(s) from previous session", len(prev_positions))
+    except Exception:
+        logger.error("Failed to restore positions from DB", exc_info=True)
+
     # Kill switch handler
     stop_event = asyncio.Event()
 
     def _shutdown(*_: object) -> None:
-        logger.warning("Shutdown signal received")
+        logger.warning("Shutdown signal received – finishing current cycle then stopping")
         stop_event.set()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -212,6 +261,7 @@ async def run_live(cfg: BotConfig) -> None:
                                 sym, pos.size, close_price, pos.side,
                             )
                         risk_mgr.update_position(sym, PositionInfo(symbol=sym, side=pos.side, size=0))
+                        _save_position(PositionInfo(symbol=sym, side=pos.side, size=0))
                     except Exception:
                         logger.error("Failed to flatten %s", sym, exc_info=True)
             break
@@ -411,14 +461,16 @@ async def run_live(cfg: BotConfig) -> None:
                                         side, sym, filled_qty, fill_px, paper_fee,
                                     )
                                     pos_side = "long" if "long" in decision.action else "short"
-                                    risk_mgr.update_position(sym, PositionInfo(
+                                    new_pos = PositionInfo(
                                         symbol=sym,
                                         side=pos_side,
                                         size=result.filled_qty,
                                         entry_price=result.avg_price,
                                         current_price=result.avg_price,
                                         leverage=alloc.max_leverage,
-                                    ))
+                                    )
+                                    risk_mgr.update_position(sym, new_pos)
+                                    _save_position(new_pos)
                                     last_entry_cycle[sym] = cycle
                             else:
                                 result = await exec_engine.execute(
@@ -435,14 +487,16 @@ async def run_live(cfg: BotConfig) -> None:
                                 )
                                 if result.success and result.filled_qty > 0:
                                     pos_side = "long" if "long" in decision.action else "short"
-                                    risk_mgr.update_position(sym, PositionInfo(
+                                    new_pos = PositionInfo(
                                         symbol=sym,
                                         side=pos_side,
                                         size=result.filled_qty,
                                         entry_price=result.avg_price,
                                         current_price=result.avg_price,
                                         leverage=alloc.max_leverage,
-                                    ))
+                                    )
+                                    risk_mgr.update_position(sym, new_pos)
+                                    _save_position(new_pos)
                                     last_entry_cycle[sym] = cycle
 
                     elif decision.action == "exit":
@@ -463,9 +517,9 @@ async def run_live(cfg: BotConfig) -> None:
                                 if pos.side == "short":
                                     pnl = -((fill_px - pos.entry_price) * pos.size) - paper_fee
                                 risk_mgr.record_pnl(pnl)
-                                risk_mgr.update_position(sym, PositionInfo(
-                                    symbol=sym, side=pos.side, size=0,
-                                ))
+                                closed = PositionInfo(symbol=sym, side=pos.side, size=0)
+                                risk_mgr.update_position(sym, closed)
+                                _save_position(closed)
                                 strategy_monitor.record_trade(alloc.strategy, pnl, paper_fee)
                                 logger.info("[PAPER] Simulated exit %s pnl=%.4f fee=%.4f", sym, pnl, paper_fee)
                             else:
@@ -488,9 +542,9 @@ async def run_live(cfg: BotConfig) -> None:
                                     if pos.side == "short":
                                         pnl = -pnl
                                     risk_mgr.record_pnl(pnl)
-                                    risk_mgr.update_position(sym, PositionInfo(
-                                        symbol=sym, side=pos.side, size=0,
-                                    ))
+                                    closed = PositionInfo(symbol=sym, side=pos.side, size=0)
+                                    risk_mgr.update_position(sym, closed)
+                                    _save_position(closed)
                                     # Estimate exit fee from fill to track net expectancy
                                     trade_cost = (
                                         pos.size * result.avg_price * DEFAULT_TAKER_FEE
@@ -501,9 +555,9 @@ async def run_live(cfg: BotConfig) -> None:
                 except Exception:
                     logger.error("Error processing %s", sym, exc_info=True)
 
-            # Dashboard
-            if cycle % 10 == 0:
-                print_dashboard(risk_mgr, active_strategies)
+            # Dashboard – every 5 cycles (~5 minutes)
+            if cycle % 5 == 0:
+                print_dashboard(risk_mgr, active_strategies, cycle=cycle)
                 if cfg.live_diagnostic:
                     logger.info("[MONITOR] %s", strategy_monitor.get_status())
 
@@ -512,8 +566,13 @@ async def run_live(cfg: BotConfig) -> None:
 
         await asyncio.sleep(60)  # 1 min cycle
 
-    # Cleanup
-    logger.info("Shutting down...")
+    # Clean shutdown: persist all remaining open positions and show final state
+    logger.info("Shutting down – saving open positions...")
+    for pos in list(risk_mgr.positions.values()):
+        if pos.size > 0:
+            _save_position(pos)
+    print_dashboard(risk_mgr, active_strategies={}, cycle=cycle)
+    logger.info("Shutdown complete.")
     await client.close()
 
 
