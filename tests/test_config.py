@@ -16,6 +16,7 @@ class TestConfig:
         assert cfg.kill_switch is False
         assert cfg.risk.max_daily_loss_pct == 3.0
         assert cfg.risk.max_leverage == 3.0
+        assert cfg.fast_interval == 30
 
     def test_is_live(self):
         cfg = BotConfig(mode="LIVE")

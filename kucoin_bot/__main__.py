@@ -16,7 +16,7 @@ from kucoin_bot.config import BotConfig, load_config
 from kucoin_bot.reporting.cli import print_dashboard
 from kucoin_bot.services.cost_model import CostModel
 from kucoin_bot.services.execution import ExecutionEngine, OrderRequest, OrderResult
-from kucoin_bot.services.market_data import MarketDataService, _KLINE_PERIOD_SECONDS
+from kucoin_bot.services.market_data import _KLINE_PERIOD_SECONDS, MarketDataService
 from kucoin_bot.services.portfolio import AllocationTarget, PortfolioManager
 from kucoin_bot.services.risk_manager import PositionInfo, RiskManager
 from kucoin_bot.services.side_selector import SideSelector
