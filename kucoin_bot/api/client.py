@@ -236,6 +236,15 @@ class KuCoinClient:
         resp = await self._public_get("/api/v1/market/orderbook/level1", {"symbol": symbol})
         return dict(resp.get("data", {}))
 
+    async def get_all_tickers(self) -> List[dict]:
+        """Fetch tickers for all trading pairs (Weight 15, public).
+
+        Returns a list of ticker dicts with fields including
+        ``symbol``, ``buy``, ``sell``, ``last``, ``vol``, ``volValue``.
+        """
+        resp = await self._public_get("/api/v1/market/allTickers")
+        return list(resp.get("data", {}).get("ticker", []))
+
     async def get_klines(
         self,
         symbol: str,
