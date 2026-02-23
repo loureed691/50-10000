@@ -43,6 +43,22 @@ class TestConfig:
         assert rc.min_ev_bps == 10.0
         assert rc.cooldown_bars == 5
 
+    def test_blank_numeric_env_uses_default(self, monkeypatch):
+        """Blank numeric env vars (e.g. MAX_LEVERAGE=) must fall back to defaults."""
+        monkeypatch.setenv("MAX_LEVERAGE", "")
+        monkeypatch.setenv("COOLDOWN_BARS", "")
+        monkeypatch.setenv("FUNDING_RATE_PER_8H", "")
+        cfg = load_config()
+        assert cfg.risk.max_leverage == 3.0
+        assert cfg.risk.cooldown_bars == 5
+        assert cfg.short.funding_rate_per_8h == 0.0001
+
+    def test_invalid_numeric_env_uses_default(self, monkeypatch):
+        """Invalid numeric env vars must fall back to defaults with a warning."""
+        monkeypatch.setenv("MAX_LEVERAGE", "not-a-number")
+        cfg = load_config()
+        assert cfg.risk.max_leverage == 3.0
+
     def test_env_override(self, monkeypatch):
         monkeypatch.setenv("MAX_LEVERAGE", "5.0")
         monkeypatch.setenv("BOT_MODE", "LIVE")
@@ -203,5 +219,22 @@ class TestModeResolutionIntegration:
         with pytest.raises(SystemExit) as exc_info:
             main_module.main()
         assert exc_info.value.code == 1
+
+    def test_help_flag_exits_zero(self, monkeypatch):
+        """--help and -h must print usage and exit 0."""
+        from kucoin_bot import __main__ as main_module
+        for flag in ("--help", "-h"):
+            monkeypatch.setattr(sys, "argv", ["kucoin-bot", flag])
+            with pytest.raises(SystemExit) as exc_info:
+                main_module.main()
+            assert exc_info.value.code == 0
+
+    def test_unknown_cli_args_exit_two(self, monkeypatch):
+        """Unknown CLI args must exit with code 2."""
+        from kucoin_bot import __main__ as main_module
+        monkeypatch.setattr(sys, "argv", ["kucoin-bot", "--mode", "live"])
+        with pytest.raises(SystemExit) as exc_info:
+            main_module.main()
+        assert exc_info.value.code == 2
 
 

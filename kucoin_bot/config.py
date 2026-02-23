@@ -170,6 +170,26 @@ def load_config() -> BotConfig:
             logger.warning("Invalid boolean value %r for %s, using %s", raw, env_key, default)
             return parse_bool(default)
 
+    def _float_env(env_key: str, default: float) -> float:
+        raw = os.getenv(env_key, "")
+        if not raw.strip():
+            return default
+        try:
+            return float(raw)
+        except ValueError:
+            logger.warning("Invalid float value %r for %s, using %s", raw, env_key, default)
+            return default
+
+    def _int_env(env_key: str, default: int) -> int:
+        raw = os.getenv(env_key, "")
+        if not raw.strip():
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            logger.warning("Invalid int value %r for %s, using %s", raw, env_key, default)
+            return default
+
     cfg = BotConfig(
         api_key=os.getenv("KUCOIN_API_KEY", ""),
         api_secret=os.getenv("KUCOIN_API_SECRET", ""),
@@ -184,22 +204,22 @@ def load_config() -> BotConfig:
         redis_url=os.getenv("REDIS_URL") or None,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         risk=RiskConfig(
-            max_daily_loss_pct=float(os.getenv("MAX_DAILY_LOSS_PCT", "3.0")),
-            max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "10.0")),
-            max_total_exposure_pct=float(os.getenv("MAX_TOTAL_EXPOSURE_PCT", "80.0")),
-            max_leverage=float(os.getenv("MAX_LEVERAGE", "3.0")),
-            max_per_position_risk_pct=float(os.getenv("MAX_PER_POSITION_RISK_PCT", "2.0")),
-            max_correlated_exposure_pct=float(os.getenv("MAX_CORRELATED_EXPOSURE_PCT", "30.0")),
-            min_ev_bps=float(os.getenv("MIN_EV_BPS", "10.0")),
-            cooldown_bars=int(os.getenv("COOLDOWN_BARS", "5")),
+            max_daily_loss_pct=_float_env("MAX_DAILY_LOSS_PCT", 3.0),
+            max_drawdown_pct=_float_env("MAX_DRAWDOWN_PCT", 10.0),
+            max_total_exposure_pct=_float_env("MAX_TOTAL_EXPOSURE_PCT", 80.0),
+            max_leverage=_float_env("MAX_LEVERAGE", 3.0),
+            max_per_position_risk_pct=_float_env("MAX_PER_POSITION_RISK_PCT", 2.0),
+            max_correlated_exposure_pct=_float_env("MAX_CORRELATED_EXPOSURE_PCT", 30.0),
+            min_ev_bps=_float_env("MIN_EV_BPS", 10.0),
+            cooldown_bars=_int_env("COOLDOWN_BARS", 5),
         ),
         short=ShortConfig(
             allow_shorts=_bool_env("ALLOW_SHORTS", "true"),
             prefer_futures=_bool_env("SHORT_PREFER_FUTURES", "true"),
             require_futures_for_short=_bool_env("REQUIRE_FUTURES_FOR_SHORT", "true"),
-            funding_rate_per_8h=float(os.getenv("FUNDING_RATE_PER_8H", "0.0001")),
-            borrow_rate_per_hour=float(os.getenv("BORROW_RATE_PER_HOUR", "0.00003")),
-            expected_holding_hours=float(os.getenv("EXPECTED_HOLDING_HOURS", "24.0")),
+            funding_rate_per_8h=_float_env("FUNDING_RATE_PER_8H", 0.0001),
+            borrow_rate_per_hour=_float_env("BORROW_RATE_PER_HOUR", 0.00003),
+            expected_holding_hours=_float_env("EXPECTED_HOLDING_HOURS", 24.0),
         ),
     )
 
