@@ -470,6 +470,38 @@ class TestReduceOnly:
         )
         assert "reduceOnly" not in call_args.get("body", {})
 
+    def test_futures_order_includes_margin_mode(self):
+        """place_futures_order must include marginMode in the request body."""
+        import asyncio
+
+        call_args = {}
+
+        async def fake_request(method, path, **kwargs):
+            call_args.update(kwargs)
+            return {"code": "200000", "data": {"orderId": "x"}}
+
+        from kucoin_bot.api.client import KuCoinClient
+
+        client = KuCoinClient.__new__(KuCoinClient)
+        client._api_key = "k"
+        client._api_secret = "s"
+        client._api_passphrase = "p"
+        client._rest_url = "https://api.kucoin.com"
+        client._futures_rest_url = "https://api-futures.kucoin.com"
+        client._session = object()
+        client._request_times = []
+        client._time_offset_ms = 0
+        client._request = fake_request
+
+        asyncio.run(
+            client.place_futures_order(
+                symbol="XBTUSDTM",
+                side="sell",
+                size=1,
+            )
+        )
+        assert call_args.get("body", {}).get("marginMode") == "ISOLATED"
+
 
 # ---------------------------------------------------------------------------
 # 7. Side selector and squeeze filter
