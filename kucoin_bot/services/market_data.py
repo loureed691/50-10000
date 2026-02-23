@@ -85,14 +85,14 @@ class MarketDataService:
 
     client: KuCoinClient
     universe: Dict[str, MarketInfo] = field(default_factory=dict)
-    _kline_cache: OrderedDict = field(default_factory=OrderedDict)
+    _kline_cache: OrderedDict[str, tuple[list, float, str]] = field(default_factory=OrderedDict)
     _kline_cache_max_entries: int = _KLINE_CACHE_MAX_ENTRIES
     _refresh_interval: float = 300.0  # 5 min
     _last_cache_cleanup: float = 0.0
 
     # ── LRU cache helpers ──────────────────────────────────────────
 
-    def _cache_get(self, key: str) -> Optional[tuple]:
+    def _cache_get(self, key: str) -> Optional[tuple[list, float, str]]:
         """Return cached entry and promote it (LRU), or *None*."""
         entry = self._kline_cache.get(key)
         if entry is not None:
