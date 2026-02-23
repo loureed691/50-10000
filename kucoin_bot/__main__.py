@@ -94,7 +94,7 @@ async def _compute_total_equity(
                         pass
                 if price > 0:
                     total += balance * price
-        return total if total > 0 else 0.0
+        return total
     except Exception:
         logger.error("Failed to compute total portfolio equity", exc_info=True)
         return 0.0
@@ -186,7 +186,7 @@ async def run_live(cfg: BotConfig) -> None:
     cooldown_cycles = cfg.risk.cooldown_bars * 60  # convert bars to 60-second cycles
 
     # Daily reset tracking (UTC date string)
-    _last_reset_day: str = time.strftime("%Y-%m-%d", time.gmtime())
+    last_reset_day: str = time.strftime("%Y-%m-%d", time.gmtime())
 
     logger.info(
         "Starting %s loop with %d strategies | EV gate: %.0f bps | cooldown: %d bars",
@@ -220,9 +220,9 @@ async def run_live(cfg: BotConfig) -> None:
         try:
             # Daily PnL / circuit-breaker reset at UTC midnight
             current_day = time.strftime("%Y-%m-%d", time.gmtime())
-            if current_day != _last_reset_day:
+            if current_day != last_reset_day:
                 risk_mgr.reset_daily()
-                _last_reset_day = current_day
+                last_reset_day = current_day
                 logger.info("Daily PnL reset. New day: %s", current_day)
 
             # Refresh universe and full portfolio equity periodically
