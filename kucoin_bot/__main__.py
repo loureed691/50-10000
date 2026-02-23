@@ -253,13 +253,11 @@ async def run_live(cfg: BotConfig) -> None:
             # Collect signals for all symbols first so portfolio allocation
             # can normalise weights across the whole universe.
             all_signals: dict[str, SignalScores] = {}
-            all_klines: dict[str, list] = {}
             for sym in symbols_to_process:
                 try:
                     klines = await market_data.get_klines(sym)
                     if len(klines) < signal_engine.lookback:
                         continue
-                    all_klines[sym] = klines
                     all_signals[sym] = signal_engine.compute(sym, klines)
                 except Exception:
                     logger.error("Error fetching signals for %s", sym, exc_info=True)
@@ -491,7 +489,7 @@ async def run_live(cfg: BotConfig) -> None:
                                 paper_fee = pos.size * fill_px * DEFAULT_TAKER_FEE
                                 raw_pnl = (fill_px - pos.entry_price) * pos.size
                                 if pos.side == "short":
-                                    raw_pnl = -(raw_pnl)
+                                    raw_pnl = -raw_pnl
                                 pnl = raw_pnl - paper_fee
                                 risk_mgr.record_pnl(pnl)
                                 risk_mgr.update_equity(risk_mgr.current_equity + pnl)
