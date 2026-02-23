@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import Dict, List, Optional
 
 from kucoin_bot.api.client import KuCoinClient
@@ -12,6 +13,12 @@ from kucoin_bot.services.market_data import MarketInfo
 from kucoin_bot.services.risk_manager import RiskManager
 
 logger = logging.getLogger(__name__)
+
+
+def _quantize(value: float, increment: float, rounding: str = ROUND_DOWN) -> float:
+    """Quantize *value* to the nearest *increment* using exact Decimal math."""
+    inc = Decimal(str(increment))
+    return float(Decimal(str(value)).quantize(inc, rounding=rounding))
 
 
 @dataclass
@@ -78,9 +85,9 @@ class ExecutionEngine:
                 return OrderResult(success=False, message="below_min_size")
             # Round to increment
             if market.base_increment > 0:
-                size = round(size / market.base_increment) * market.base_increment
+                size = _quantize(size, market.base_increment, ROUND_DOWN)
             if market.price_increment > 0:
-                price = round(price / market.price_increment) * market.price_increment
+                price = _quantize(price, market.price_increment, ROUND_HALF_UP)
 
         # Determine order type policy
         order_type = req.order_type

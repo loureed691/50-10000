@@ -66,6 +66,80 @@ class TestExecutionEngine:
         assert result.success is False
         assert "spread" in result.message
 
+    @pytest.mark.asyncio
+    async def test_size_quantized_to_increment(self):
+        """Size must be exactly on the base_increment grid (no float artefacts)."""
+        engine = self._make_engine()
+        # ZEC-USDT style: base_increment = 0.0001, price ~30
+        market = MarketInfo(
+            symbol="ZEC-USDT", base="ZEC", quote="USDT",
+            base_min_size=0.0001, base_increment=0.0001,
+            price_increment=0.01, last_price=30.0, spread_bps=5.0,
+        )
+        # notional / price = 100 / 30 = 3.3333... -> should truncate to 3.3333
+        result = await engine.execute(
+            OrderRequest(symbol="ZEC-USDT", side="buy", notional=100, price=30.0, reason="test"),
+            market,
+        )
+        assert result.success is True
+        # Verify the size string passed to client has no float artefacts
+        call_kwargs = engine.client.place_order.call_args
+        sent_size = call_kwargs.kwargs.get("size") or call_kwargs[1].get("size")
+        # str(float) must not produce trailing garbage digits
+        assert "." in str(sent_size)
+        parts = str(sent_size).split(".")
+        assert len(parts[1]) <= 4  # 0.0001 -> max 4 decimal places
+
+    @pytest.mark.asyncio
+    async def test_size_truncated_not_rounded_up(self):
+        """Size rounding must truncate (floor) to avoid exceeding available funds."""
+        engine = self._make_engine()
+        market = MarketInfo(
+            symbol="ZEC-USDT", base="ZEC", quote="USDT",
+            base_min_size=0.01, base_increment=0.01,
+            price_increment=0.01, last_price=40.0, spread_bps=5.0,
+        )
+        # notional / price = 100 / 40 = 2.5 -> truncate to 2.50
+        result = await engine.execute(
+            OrderRequest(symbol="ZEC-USDT", side="buy", notional=99, price=40.0, reason="test"),
+            market,
+        )
+        assert result.success is True
+        call_kwargs = engine.client.place_order.call_args
+        sent_size = call_kwargs.kwargs.get("size") or call_kwargs[1].get("size")
+        # 99/40 = 2.475 -> should truncate to 2.47, not round to 2.48
+        assert sent_size == 2.47
+
+
+class TestQuantize:
+    """Unit tests for the _quantize helper used by ExecutionEngine."""
+
+    def test_basic_rounding(self):
+        from kucoin_bot.services.execution import _quantize
+        from decimal import ROUND_DOWN
+        assert _quantize(1.23456, 0.0001) == 1.2345
+
+    def test_no_float_artefacts(self):
+        from kucoin_bot.services.execution import _quantize
+        # This would fail with naive float math: round(1236 * 0.0001) != 0.1236
+        result = _quantize(0.12369, 0.0001)
+        assert result == 0.1236
+        assert str(result) == "0.1236"
+
+    def test_round_down(self):
+        from kucoin_bot.services.execution import _quantize
+        from decimal import ROUND_DOWN
+        assert _quantize(2.999, 0.01, ROUND_DOWN) == 2.99
+
+    def test_round_half_up(self):
+        from kucoin_bot.services.execution import _quantize
+        from decimal import ROUND_HALF_UP
+        assert _quantize(2.995, 0.01, ROUND_HALF_UP) == 3.0
+
+    def test_whole_number_increment(self):
+        from kucoin_bot.services.execution import _quantize
+        assert _quantize(3.7, 1) == 3.0
+
 
 class TestPortfolioManager:
     def test_strategy_selection(self):
