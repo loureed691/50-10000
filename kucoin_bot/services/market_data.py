@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -13,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 MAX_SPREAD_BPS = 100  # 1 %
 MIN_VOL_VALUE = 10_000.0  # minimum 24 h traded amount (USDT)
-_KLINE_CACHE_TTL = 60.0  # seconds – fallback; candle-aware logic preferred
+_KLINE_CACHE_MAX_ENTRIES = 5_000  # LRU cap
+_STALE_CLEANUP_INTERVAL = 60.0  # seconds between stale-entry sweeps
 
 # Map kline type strings to their period in seconds for correct time window calculation
 _KLINE_PERIOD_SECONDS: Dict[str, int] = {
@@ -48,6 +50,12 @@ _FUTURES_GRANULARITY: Dict[str, int] = {
 }
 
 
+def _dynamic_ttl(kline_type: str) -> float:
+    """Derive cache TTL from candle period: ``min(300, period / 2)``."""
+    period = _KLINE_PERIOD_SECONDS.get(kline_type, 3600)
+    return min(300.0, period / 2)
+
+
 @dataclass
 class MarketInfo:
     """Parsed market metadata."""
@@ -77,8 +85,47 @@ class MarketDataService:
 
     client: KuCoinClient
     universe: Dict[str, MarketInfo] = field(default_factory=dict)
-    _kline_cache: Dict[str, tuple] = field(default_factory=dict)
+    _kline_cache: OrderedDict[str, tuple[list, float, str]] = field(default_factory=OrderedDict)
+    _kline_cache_max_entries: int = _KLINE_CACHE_MAX_ENTRIES
     _refresh_interval: float = 300.0  # 5 min
+    _last_cache_cleanup: float = 0.0
+
+    # ── LRU cache helpers ──────────────────────────────────────────
+
+    def _cache_get(self, key: str) -> Optional[tuple[list, float, str]]:
+        """Return cached entry and promote it (LRU), or *None*."""
+        entry = self._kline_cache.get(key)
+        if entry is not None:
+            self._kline_cache.move_to_end(key)
+        return entry
+
+    def _cache_put(self, key: str, data: list, kline_type: str) -> None:
+        """Insert/update a cache entry, enforce LRU cap, run periodic cleanup."""
+        now = time.time()
+        if key in self._kline_cache:
+            self._kline_cache.move_to_end(key)
+        self._kline_cache[key] = (data, now, kline_type)
+        # Evict least-recently-used entries when over cap
+        while len(self._kline_cache) > self._kline_cache_max_entries:
+            self._kline_cache.popitem(last=False)
+        # Periodic stale-entry sweep
+        if now - self._last_cache_cleanup > _STALE_CLEANUP_INTERVAL:
+            self._evict_stale_entries()
+
+    def _evict_stale_entries(self) -> int:
+        """Remove entries whose candle has already closed. Returns count removed."""
+        now = time.time()
+        self._last_cache_cleanup = now
+        stale_keys = [
+            k
+            for k, (data, _ts, kt) in self._kline_cache.items()
+            if not self._candle_still_fresh(data, kt, now)
+        ]
+        for k in stale_keys:
+            del self._kline_cache[k]
+        if stale_keys:
+            logger.debug("Evicted %d stale kline cache entries", len(stale_keys))
+        return len(stale_keys)
 
     async def refresh_universe(self) -> None:
         """Fetch all USDT-quoted pairs and filter by liquidity."""
@@ -199,9 +246,9 @@ class MarketDataService:
         cache_key = f"{symbol}:{kline_type}"
         now = time.time()
 
-        cached = self._kline_cache.get(cache_key)
+        cached = self._cache_get(cache_key)
         if cached is not None:
-            cached_data, ts = cached
+            cached_data, ts, _kt = cached
             if self._candle_still_fresh(cached_data, kline_type, now):
                 return list(cached_data)
 
@@ -213,7 +260,7 @@ class MarketDataService:
         # by the timestamp field (index 0).
         if data and len(data) > 1:
             data = sorted(data, key=lambda k: int(k[0]))
-        self._kline_cache[cache_key] = (data, now)
+        self._cache_put(cache_key, data, kline_type)
         return data
 
     async def get_klines_futures(self, symbol: str, kline_type: str = "1hour", bars: int = 200) -> List[list]:
@@ -221,9 +268,9 @@ class MarketDataService:
         cache_key = f"{symbol}:{kline_type}:futures"
         now = time.time()
 
-        cached = self._kline_cache.get(cache_key)
+        cached = self._cache_get(cache_key)
         if cached is not None:
-            cached_data, ts = cached
+            cached_data, ts, _kt = cached
             if self._candle_still_fresh(cached_data, kline_type, now):
                 return list(cached_data)
 
@@ -243,7 +290,7 @@ class MarketDataService:
                 result.append([str(ts_s), str(o), str(c), str(h), str(l_), str(v), str(v * c)])
         if result and len(result) > 1:
             result = sorted(result, key=lambda k: int(k[0]))
-        self._kline_cache[cache_key] = (result, now)
+        self._cache_put(cache_key, result, kline_type)
         return result
 
     def get_symbols(self) -> List[str]:
