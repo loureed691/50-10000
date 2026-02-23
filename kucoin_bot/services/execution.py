@@ -72,7 +72,7 @@ class ExecutionEngine:
     max_spread_bps: float = 50.0
     max_retries: int = 3
     poll_fills: bool = True  # whether to poll order status after placement
-    _margin_mode_set: Set[str] = field(default_factory=set, repr=False)
+    _margin_mode_ready: Set[str] = field(default_factory=set, repr=False)
 
     async def _ensure_margin_mode(self, symbol: str) -> None:
         """Ensure the futures symbol is set to ISOLATED margin mode.
@@ -81,14 +81,14 @@ class ExecutionEngine:
         logged but do **not** prevent order placement (the order itself may
         still succeed if the mode already matches).
         """
-        if symbol in self._margin_mode_set:
+        if symbol in self._margin_mode_ready:
             return
         try:
             await self.client.change_margin_mode(symbol, "ISOLATED")
             logger.info("Margin mode set to ISOLATED for %s", symbol)
         except Exception:
-            logger.debug("Could not switch margin mode for %s (may already be ISOLATED)", symbol, exc_info=True)
-        self._margin_mode_set.add(symbol)
+            logger.debug("Failed to switch margin mode for %s, order will proceed anyway", symbol, exc_info=True)
+        self._margin_mode_ready.add(symbol)
 
     async def execute(self, req: OrderRequest, market: Optional[MarketInfo] = None) -> OrderResult:
         """Execute an order with safety checks."""
