@@ -78,7 +78,7 @@ class ExecutionEngine:
         if price <= 0:
             return OrderResult(success=False, message="no_price")
 
-        size = req.notional / price
+        size = req.notional * req.leverage / price
         if market:
             # Respect min size
             if size < market.base_min_size:

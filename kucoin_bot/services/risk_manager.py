@@ -66,7 +66,7 @@ class RiskManager:
         if self.current_equity <= 0:
             return False
         total = sum(
-            abs(p.size * p.current_price * p.leverage) for p in self.positions.values()
+            abs(p.size * p.current_price) for p in self.positions.values()
         )
         exposure_pct = total / self.current_equity * 100
         return exposure_pct >= self.config.max_total_exposure_pct
@@ -94,7 +94,7 @@ class RiskManager:
         if self.current_equity <= 0:
             return False
         total = sum(
-            abs(p.size * p.current_price * p.leverage)
+            abs(p.size * p.current_price)
             for sym, p in self.positions.items()
             if sym in symbols
         ) + prospective_notional
@@ -111,6 +111,7 @@ class RiskManager:
         price: float,
         volatility: float,
         signals: SignalScores,
+        leverage: float = 1.0,
     ) -> float:
         """Volatility-adjusted position sizing with hard caps.
 
@@ -136,12 +137,12 @@ class RiskManager:
 
         # Ensure doesn't blow total exposure
         existing_exposure = sum(
-            abs(p.size * p.current_price * p.leverage) for p in self.positions.values()
+            abs(p.size * p.current_price) for p in self.positions.values()
         )
         max_total = self.current_equity * (self.config.max_total_exposure_pct / 100)
         remaining = max(0, max_total - existing_exposure)
-
-        notional = min(notional, remaining)
+        # remaining is in exposure units; convert to margin by dividing by leverage
+        notional = min(notional, remaining / max(leverage, 1.0))
 
         # Skip if notional too small for one unit at current price
         if notional < price * _MIN_NOTIONAL_FACTOR:
@@ -211,7 +212,7 @@ class RiskManager:
 
     def get_risk_summary(self) -> dict:
         total_exposure = sum(
-            abs(p.size * p.current_price * p.leverage) for p in self.positions.values()
+            abs(p.size * p.current_price) for p in self.positions.values()
         )
         dd = 0.0
         if self.peak_equity > 0:
