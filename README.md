@@ -28,7 +28,7 @@ A fully automatic, multi-strategy KuCoin API trading bot built in Python.
 ```
 kucoin_bot/
 ├── __main__.py              # Entry point (LIVE / PAPER / SHADOW / BACKTEST modes)
-├── config.py                # Configuration (env vars + optional YAML); ShortConfig added
+├── config.py                # Configuration (env vars only); ShortConfig added
 ├── models.py                # SQLAlchemy models (orders, trades, signals, PnL)
 ├── api/
 │   ├── client.py            # KuCoin REST client (HMAC auth, rate limiting, reduceOnly)
@@ -103,7 +103,7 @@ docker-compose --profile production up --build
 
 ## Configuration
 
-All configuration is via environment variables (see `.env.example`). An optional `config.yaml` is auto-generated on first run for overrides.
+All configuration is via environment variables (see `.env.example`).
 
 | Variable | Default | Description |
 |---|---|---|
