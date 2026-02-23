@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Realistic KuCoin fee tiers
 DEFAULT_MAKER_FEE = 0.001  # 0.1%
 DEFAULT_TAKER_FEE = 0.001
-DEFAULT_SLIPPAGE_BPS = 5  # 0.05%
+DEFAULT_SLIPPAGE_BPS = 2  # 0.02%
 DEFAULT_FILL_RATE = 0.95  # 95% fill probability for limit orders
 
 # Latency slippage scaling: each extra second of latency adds this fraction of
@@ -331,7 +331,7 @@ class BacktestEngine:
                     live_funding_rate=signals.funding_rate if signals.funding_rate != 0 else None,
                     position_side=proposed_side,
                 )
-                expected_bps = signals.volatility * 100.0 * signals.confidence
+                expected_bps = max(signals.volatility, signals.trend_strength) * 100.0 * signals.confidence
                 if not cost_model.ev_gate(expected_bps, costs):
                     logger.debug(
                         "EV gate blocked %s entry: expected %.1f bps < cost %.1f bps + buffer %.1f",

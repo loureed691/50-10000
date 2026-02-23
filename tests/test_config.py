@@ -40,7 +40,7 @@ class TestConfig:
         assert rc.max_drawdown_pct == 10.0
         assert rc.max_total_exposure_pct == 80.0
         assert rc.max_per_position_risk_pct == 2.0
-        assert rc.min_ev_bps == 10.0
+        assert rc.min_ev_bps == 5.0
         assert rc.cooldown_bars == 5
 
     def test_blank_numeric_env_uses_default(self, monkeypatch):

@@ -323,6 +323,29 @@ class TestEVGate:
         d = costs.to_dict()
         assert set(d.keys()) == {"fee_bps", "slippage_bps", "funding_bps", "borrow_bps", "total_bps"}
 
+    def test_default_cost_model_spot_round_trip(self):
+        """Default CostModel should produce 24 bps round-trip for spot taker orders."""
+        model = CostModel()
+        costs = model.estimate("taker", holding_hours=24.0)
+        # fee = 0.001 * 2 * 10000 = 20 bps, slippage = 2 * 2 = 4 bps
+        assert costs.fee_bps == pytest.approx(20.0)
+        assert costs.slippage_bps == pytest.approx(4.0)
+        assert costs.total_bps == pytest.approx(24.0)
+
+    def test_default_safety_buffer(self):
+        """Default safety buffer should be 5 bps."""
+        model = CostModel()
+        assert model.safety_buffer_bps == pytest.approx(5.0)
+
+    def test_ev_gate_passes_trending_signal(self):
+        """A trending signal with moderate volatility should pass the default EV gate."""
+        model = CostModel()
+        costs = model.estimate("taker", holding_hours=24.0)
+        # Simulates WAN-USDT-like signal: trend_strength > volatility
+        volatility, trend_strength, confidence = 0.4155, 0.6651, 0.4835
+        expected_bps = max(volatility, trend_strength) * 100.0 * confidence
+        assert expected_bps > costs.total_bps + model.safety_buffer_bps
+
 
 # ---------------------------------------------------------------------------
 # 5. No look-ahead enforcement

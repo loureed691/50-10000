@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # KuCoin default fee tiers (Level 1)
 DEFAULT_MAKER_FEE = 0.001     # 0.1 %
 DEFAULT_TAKER_FEE = 0.001     # 0.1 %
-DEFAULT_SLIPPAGE_BPS = 5.0    # 0.05 % one-way
+DEFAULT_SLIPPAGE_BPS = 2.0    # 0.02 % one-way
 
 # Perpetual funding is settled every 8 hours on KuCoin.
 # Typical neutral rate; heavily directional markets can see higher absolute values.
@@ -54,7 +54,7 @@ class CostModel:
 
         trade_allowed = expected_edge_bps > total_cost_bps + safety_buffer_bps
 
-    The ``safety_buffer_bps`` (default 10.0) is equivalent to ``min_ev_bps`` in
+    The ``safety_buffer_bps`` (default 5.0) is equivalent to ``min_ev_bps`` in
     :class:`~kucoin_bot.config.RiskConfig`, so default behaviour is identical to
     the previous inline gate.
     """
@@ -66,7 +66,7 @@ class CostModel:
         slippage_bps: float = DEFAULT_SLIPPAGE_BPS,
         funding_rate_per_8h: float = DEFAULT_FUNDING_RATE_PER_8H,
         borrow_rate_per_hour: float = DEFAULT_BORROW_RATE_PER_HOUR,
-        safety_buffer_bps: float = 10.0,
+        safety_buffer_bps: float = 5.0,
     ) -> None:
         self.maker_fee = maker_fee
         self.taker_fee = taker_fee
