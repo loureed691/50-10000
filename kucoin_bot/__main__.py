@@ -385,7 +385,8 @@ async def run_live(cfg: BotConfig) -> None:
                     # exposure check below (pending entry not yet in risk_mgr.positions).
                     if decision.action.startswith("entry_") and not pos:
                         notional = risk_mgr.compute_position_size(
-                            sym, market.last_price if market else 0, signals.volatility, signals
+                            sym, market.last_price if market else 0, signals.volatility, signals,
+                            leverage=alloc.max_leverage,
                         )
                     else:
                         notional = 0.0
@@ -424,7 +425,7 @@ async def run_live(cfg: BotConfig) -> None:
                                 slip_dir = 1 if side == "buy" else -1
                                 fill_px = last_px * (1 + slip_dir * DEFAULT_SLIPPAGE_BPS / 10_000) if last_px > 0 else 0
                                 if fill_px > 0:
-                                    filled_qty = trade_notional / fill_px
+                                    filled_qty = trade_notional * alloc.max_leverage / fill_px
                                     paper_fee = filled_qty * fill_px * DEFAULT_TAKER_FEE
                                     risk_mgr.update_equity(risk_mgr.current_equity - paper_fee)
                                     result = OrderResult(
@@ -449,6 +450,16 @@ async def run_live(cfg: BotConfig) -> None:
                                     ))
                                     last_entry_cycle[sym] = cycle
                             else:
+                                # Transfer funds if trading on a futures market
+                                mkt_type_entry = market.market_type if market else "spot"
+                                if mkt_type_entry == "futures" and cfg.allow_internal_transfers:
+                                    xfer = await portfolio_mgr.transfer_if_needed(
+                                        "USDT", "trade", "futures", trade_notional,
+                                    )
+                                    if xfer is None:
+                                        logger.warning("Futures transfer failed for %s, skipping entry", sym)
+                                        continue
+
                                 result = await exec_engine.execute(
                                     OrderRequest(
                                         symbol=sym,
@@ -463,6 +474,7 @@ async def run_live(cfg: BotConfig) -> None:
                                 )
                                 if result.success and result.filled_qty > 0:
                                     pos_side = "long" if "long" in decision.action else "short"
+                                    acct = "futures" if mkt_type_entry == "futures" else "trade"
                                     risk_mgr.update_position(sym, PositionInfo(
                                         symbol=sym,
                                         side=pos_side,
@@ -470,6 +482,7 @@ async def run_live(cfg: BotConfig) -> None:
                                         entry_price=result.avg_price,
                                         current_price=result.avg_price,
                                         leverage=alloc.max_leverage,
+                                        account_type=acct,
                                     ))
                                     last_entry_cycle[sym] = cycle
 
@@ -527,6 +540,13 @@ async def run_live(cfg: BotConfig) -> None:
                                         if result.avg_price > 0 else 0.0
                                     )
                                     strategy_monitor.record_trade(alloc.strategy, pnl, trade_cost)
+                                    # Transfer proceeds back from futures account
+                                    if is_futures_exit:
+                                        margin = abs(pos.size * pos.entry_price / max(pos.leverage, 1.0))
+                                        exit_value = max(0, margin + pnl)
+                                        await portfolio_mgr.transfer_if_needed(
+                                            "USDT", "futures", "trade", exit_value,
+                                        )
 
                 except Exception:
                     logger.error("Error processing %s", sym, exc_info=True)

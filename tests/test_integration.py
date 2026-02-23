@@ -632,3 +632,158 @@ class TestBatchPortfolioAllocation:
         }
         allocs = pm.compute_allocations(signals, ["BTC-USDT"])
         assert allocs["BTC-USDT"].weight == pytest.approx(1.0)
+
+
+class TestLeveragePositionSizing:
+    """Verify leverage amplifies position size correctly."""
+
+    @pytest.mark.asyncio
+    async def test_leverage_amplifies_position_size(self):
+        """With leverage > 1, position size should be multiplied by leverage."""
+        client = MagicMock(spec=KuCoinClient)
+        client.place_order = AsyncMock(return_value={
+            "code": "200000",
+            "data": {"orderId": "lev-order-1"},
+        })
+        risk_mgr = RiskManager(config=RiskConfig())
+        risk_mgr.update_equity(10_000)
+        engine = ExecutionEngine(client=client, risk_mgr=risk_mgr)
+
+        market = MarketInfo(
+            symbol="BTC-USDT", base="BTC", quote="USDT",
+            base_min_size=0.0001, base_increment=0.0001,
+            price_increment=0.01, last_price=30000.0, spread_bps=5.0,
+        )
+
+        # Execute without leverage (1.0)
+        result_1x = await engine.execute(
+            OrderRequest(symbol="BTC-USDT", side="buy", notional=300,
+                         price=30000.0, leverage=1.0, reason="test"),
+            market,
+        )
+        # Execute with 3x leverage
+        result_3x = await engine.execute(
+            OrderRequest(symbol="BTC-USDT", side="buy", notional=300,
+                         price=30000.0, leverage=3.0, reason="test"),
+            market,
+        )
+
+        assert result_1x.success and result_3x.success
+        # 3x leverage should give 3x the filled quantity
+        assert result_3x.filled_qty == pytest.approx(result_1x.filled_qty * 3.0, rel=0.01)
+
+    @pytest.mark.asyncio
+    async def test_leverage_1x_unchanged(self):
+        """With leverage=1.0 (default), position size is notional/price as before."""
+        client = MagicMock(spec=KuCoinClient)
+        client.place_order = AsyncMock(return_value={
+            "code": "200000",
+            "data": {"orderId": "lev-order-2"},
+        })
+        risk_mgr = RiskManager(config=RiskConfig())
+        risk_mgr.update_equity(10_000)
+        engine = ExecutionEngine(client=client, risk_mgr=risk_mgr)
+
+        market = MarketInfo(
+            symbol="ETH-USDT", base="ETH", quote="USDT",
+            base_min_size=0.001, base_increment=0.001,
+            price_increment=0.01, last_price=2000.0, spread_bps=5.0,
+        )
+
+        result = await engine.execute(
+            OrderRequest(symbol="ETH-USDT", side="buy", notional=200,
+                         price=2000.0, leverage=1.0, reason="test"),
+            market,
+        )
+        assert result.success
+        # 200 / 2000 = 0.1
+        assert result.filled_qty == pytest.approx(0.1, rel=0.01)
+
+    def test_compute_position_size_leverage_caps_exposure(self):
+        """compute_position_size with leverage should respect total exposure limit."""
+        rm = RiskManager(config=RiskConfig(
+            max_per_position_risk_pct=50.0,  # generous per-position limit
+            max_total_exposure_pct=80.0,
+        ))
+        rm.update_equity(10_000)
+
+        signals = SignalScores(symbol="BTC-USDT", confidence=0.9, volatility=0.1)
+
+        # With leverage=1, remaining exposure = 8000
+        notional_1x = rm.compute_position_size("BTC-USDT", 30000, 0.1, signals, leverage=1.0)
+        # With leverage=3, margin capacity = 8000 / 3 ≈ 2666
+        notional_3x = rm.compute_position_size("BTC-USDT", 30000, 0.1, signals, leverage=3.0)
+
+        # 3x leverage should give equal or less margin (because remaining/leverage)
+        assert notional_3x <= notional_1x
+
+    def test_leverage_computed_in_allocation(self):
+        """compute_allocations should set max_leverage > 1 for high-confidence signals."""
+        client = MagicMock(spec=KuCoinClient)
+        risk_mgr = RiskManager(config=RiskConfig(max_leverage=3.0))
+        risk_mgr.update_equity(10_000)
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr)
+
+        signals = {
+            "BTC-USDT": SignalScores(
+                symbol="BTC-USDT", regime=Regime.TRENDING_UP,
+                confidence=0.9, volatility=0.2, momentum=0.4, trend_strength=0.7,
+            ),
+        }
+        allocs = pm.compute_allocations(signals, ["BTC-USDT"])
+        assert allocs["BTC-USDT"].max_leverage > 1.0
+
+
+class TestTransferForFutures:
+    """Verify internal transfer is called for futures orders."""
+
+    @pytest.mark.asyncio
+    async def test_transfer_called_for_valid_route(self):
+        """transfer_if_needed must call inner_transfer for valid routes."""
+        client = MagicMock(spec=KuCoinClient)
+        client.inner_transfer = AsyncMock(return_value={
+            "code": "200000", "data": {"orderId": "xfer-1"},
+        })
+        risk_mgr = RiskManager(config=RiskConfig())
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr, allow_transfers=True)
+
+        result = await pm.transfer_if_needed("USDT", "trade", "futures", 500)
+        assert result is not None  # should return idempotency key
+        client.inner_transfer.assert_called_once()
+        call_kwargs = client.inner_transfer.call_args.kwargs
+        assert call_kwargs["currency"] == "USDT"
+        assert call_kwargs["from_account"] == "trade"
+        assert call_kwargs["to_account"] == "futures"
+        assert call_kwargs["amount"] == 500
+
+    @pytest.mark.asyncio
+    async def test_transfer_trade_to_futures_allowed(self):
+        """trade → futures is a valid transfer route."""
+        client = MagicMock(spec=KuCoinClient)
+        client.inner_transfer = AsyncMock(return_value={"code": "200000"})
+        risk_mgr = RiskManager(config=RiskConfig())
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr, allow_transfers=True)
+
+        result = await pm.transfer_if_needed("USDT", "trade", "futures", 100)
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_transfer_futures_to_trade_allowed(self):
+        """futures → trade is a valid transfer route (for exit proceeds)."""
+        client = MagicMock(spec=KuCoinClient)
+        client.inner_transfer = AsyncMock(return_value={"code": "200000"})
+        risk_mgr = RiskManager(config=RiskConfig())
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr, allow_transfers=True)
+
+        result = await pm.transfer_if_needed("USDT", "futures", "trade", 200)
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_transfer_zero_amount_skipped(self):
+        """Transferring zero amount should be skipped."""
+        client = MagicMock(spec=KuCoinClient)
+        risk_mgr = RiskManager(config=RiskConfig())
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr, allow_transfers=True)
+
+        result = await pm.transfer_if_needed("USDT", "trade", "futures", 0)
+        assert result is None
