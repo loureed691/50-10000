@@ -44,8 +44,8 @@ class TestQuantizeFuturesSize:
     def test_lot_size_multiple(self) -> None:
         assert _quantize_futures_size(25.0, lot_size=10) == 20
 
-    def test_below_lot_size_returns_min(self) -> None:
-        assert _quantize_futures_size(0.5, lot_size=1) == 1
+    def test_below_lot_size_returns_zero(self) -> None:
+        assert _quantize_futures_size(0.5, lot_size=1) == 0
 
     def test_zero_lot_size_defaults(self) -> None:
         assert _quantize_futures_size(5.0, lot_size=0) == 5

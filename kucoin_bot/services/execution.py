@@ -31,7 +31,7 @@ def _quantize_futures_size(raw_size: float, lot_size: int = 1) -> int:
     if lot_size <= 0:
         lot_size = 1
     contracts = int(raw_size / lot_size) * lot_size
-    return max(contracts, lot_size)
+    return max(contracts, 0)
 
 
 @dataclass
