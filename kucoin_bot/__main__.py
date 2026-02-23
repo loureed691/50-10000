@@ -233,8 +233,15 @@ async def run_live(cfg: BotConfig) -> None:
                     risk_mgr.update_equity(total_equity)
 
             # Process each pair
+            # Build the symbol list: universe symbols (optionally capped) plus
+            # any symbols that have open positions so they are always managed.
             active_strategies: dict[str, str] = {}
-            for sym in market_data.get_symbols()[:20]:  # Top 20 pairs
+            universe_syms = market_data.get_symbols()
+            if cfg.max_symbols > 0:
+                universe_syms = universe_syms[:cfg.max_symbols]
+            position_syms = [s for s in risk_mgr.positions if s not in universe_syms]
+            symbols_to_process = universe_syms + position_syms
+            for sym in symbols_to_process:
                 try:
                     klines = await market_data.get_klines(sym)
                     if len(klines) < signal_engine.lookback:

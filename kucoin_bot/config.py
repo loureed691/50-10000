@@ -137,6 +137,11 @@ class BotConfig:
     # Short trading
     short: ShortConfig = field(default_factory=ShortConfig)
 
+    # Maximum number of symbols to scan from the market universe per cycle.
+    # 0 means no limit (scan all eligible pairs).
+    # Symbols with open positions are always included regardless of this cap.
+    max_symbols: int = 0
+
     # Logging
     log_level: str = "INFO"
 
@@ -205,6 +210,7 @@ def load_config() -> BotConfig:
         db_type=os.getenv("DB_TYPE", "sqlite"),
         db_url=os.getenv("DB_URL", "sqlite:///kucoin_bot.db"),
         redis_url=os.getenv("REDIS_URL") or None,
+        max_symbols=_int_env("MAX_SYMBOLS", 0),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         risk=RiskConfig(
             max_daily_loss_pct=_float_env("MAX_DAILY_LOSS_PCT", 3.0),

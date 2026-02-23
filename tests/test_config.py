@@ -84,6 +84,15 @@ class TestConfig:
         assert cfg.risk.min_ev_bps == 25.0
         assert cfg.risk.cooldown_bars == 10
 
+    def test_max_symbols_default_zero(self):
+        cfg = load_config()
+        assert cfg.max_symbols == 0
+
+    def test_max_symbols_from_env(self, monkeypatch):
+        monkeypatch.setenv("MAX_SYMBOLS", "30")
+        cfg = load_config()
+        assert cfg.max_symbols == 30
+
     def test_live_mode_refused_without_live_trading(self, monkeypatch):
         """main() must exit(1) when BOT_MODE=LIVE but LIVE_TRADING!=true."""
         monkeypatch.setenv("BOT_MODE", "LIVE")

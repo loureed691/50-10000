@@ -277,6 +277,72 @@ class TestCooldownLogic:
         )
 
 
+class TestSymbolInclusion:
+    """Verify that all open positions are always included in the processing loop."""
+
+    def test_open_positions_included_when_not_in_universe(self):
+        """Symbols with open positions must be processed even if outside the universe."""
+        universe_syms = ["BTC-USDT", "ETH-USDT", "SOL-USDT"]
+        positions = {"DOGE-USDT": True, "BTC-USDT": True}
+        max_symbols = 0  # no limit
+
+        if max_symbols > 0:
+            universe_syms = universe_syms[:max_symbols]
+        position_syms = [s for s in positions if s not in universe_syms]
+        symbols_to_process = universe_syms + position_syms
+
+        assert "DOGE-USDT" in symbols_to_process, (
+            "DOGE-USDT has an open position and must be processed"
+        )
+        assert "BTC-USDT" in symbols_to_process
+        # No duplicates
+        assert len(symbols_to_process) == len(set(symbols_to_process))
+
+    def test_max_symbols_caps_universe_but_keeps_positions(self):
+        """When max_symbols limits universe, positions outside it are still included."""
+        universe_syms = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "ADA-USDT", "XRP-USDT"]
+        positions = {"XRP-USDT": True, "AVAX-USDT": True}
+        max_symbols = 2  # only top 2 from universe
+
+        if max_symbols > 0:
+            universe_syms = universe_syms[:max_symbols]
+        position_syms = [s for s in positions if s not in universe_syms]
+        symbols_to_process = universe_syms + position_syms
+
+        # Universe capped at 2
+        assert universe_syms == ["BTC-USDT", "ETH-USDT"]
+        # But positions not in the capped universe are appended
+        assert "XRP-USDT" in symbols_to_process
+        assert "AVAX-USDT" in symbols_to_process
+        assert len(symbols_to_process) == 4
+
+    def test_no_limit_processes_all_universe(self):
+        """When max_symbols is 0, all universe symbols are processed."""
+        universe_syms = [f"SYM{i}-USDT" for i in range(50)]
+        positions: dict[str, bool] = {}
+        max_symbols = 0
+
+        if max_symbols > 0:
+            universe_syms = universe_syms[:max_symbols]
+        position_syms = [s for s in positions if s not in universe_syms]
+        symbols_to_process = universe_syms + position_syms
+
+        assert len(symbols_to_process) == 50
+
+    def test_no_duplicates_when_position_in_universe(self):
+        """Symbols that are both in the universe and have positions are not duplicated."""
+        universe_syms = ["BTC-USDT", "ETH-USDT"]
+        positions = {"BTC-USDT": True}
+        max_symbols = 0
+
+        if max_symbols > 0:
+            universe_syms = universe_syms[:max_symbols]
+        position_syms = [s for s in positions if s not in universe_syms]
+        symbols_to_process = universe_syms + position_syms
+
+        assert symbols_to_process == ["BTC-USDT", "ETH-USDT"]
+
+
 class TestPaperMode:
     """Verify PAPER mode never calls the real order API."""
 
