@@ -8,6 +8,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
+from dotenv import load_dotenv
+
 logger = logging.getLogger(__name__)
 
 # Truthy strings accepted by parse_bool
@@ -156,7 +158,8 @@ class BotConfig:
 
 
 def load_config() -> BotConfig:
-    """Load configuration from environment variables only."""
+    """Load configuration from environment variables (and ``.env`` file)."""
+    load_dotenv()  # load .env file into os.environ so users don't have to source it
     # Resolve mode from env vars
     mode_val, mode_source = resolve_mode(dict(os.environ))
     # Log at WARNING so it appears before _setup_logging() configures the level
