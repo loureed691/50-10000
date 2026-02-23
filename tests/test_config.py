@@ -140,6 +140,37 @@ class TestResolveMode:
             resolve_mode({"BOT_MODE": "bogus"})
 
 
+class TestDotenvLoading:
+    """Verify that load_config() calls load_dotenv to read .env files."""
+
+    def test_load_config_calls_load_dotenv(self, monkeypatch):
+        """load_config() must call load_dotenv() so .env files are picked up."""
+        from unittest.mock import MagicMock
+        mock_ld = MagicMock()
+        monkeypatch.setattr("kucoin_bot.config.load_dotenv", mock_ld)
+        load_config()
+        mock_ld.assert_called_once()
+
+    def test_dotenv_file_sets_bot_mode(self, tmp_path, monkeypatch):
+        """A .env file should be loaded so BOT_MODE is available."""
+        dotenv_file = tmp_path / ".env"
+        dotenv_file.write_text("BOT_MODE=LIVE\nLIVE_TRADING=true\n")
+        # Remove any pre-existing env vars so .env is the only source
+        monkeypatch.delenv("BOT_MODE", raising=False)
+        monkeypatch.delenv("MODE", raising=False)
+        monkeypatch.delenv("LIVE_TRADING", raising=False)
+        # Patch load_dotenv to load from our tmp .env file
+        from functools import partial
+        from dotenv import load_dotenv as real_load_dotenv
+        monkeypatch.setattr(
+            "kucoin_bot.config.load_dotenv",
+            partial(real_load_dotenv, dotenv_path=str(dotenv_file)),
+        )
+        cfg = load_config()
+        assert cfg.mode == "LIVE"
+        assert cfg.live_trading is True
+
+
 class TestModeResolutionIntegration:
     """Integration tests for mode resolution via load_config()."""
 
