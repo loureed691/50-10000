@@ -128,8 +128,9 @@ class RiskManager:
         # Volatility adjustment: reduce size when vol is high
         vol_factor = max(0.2, 1.0 - volatility)
 
-        # Confidence adjustment
-        conf_factor = max(0.1, signals.confidence)
+        # Confidence adjustment: exponential scaling rewards high-confidence trades
+        # and penalises low-confidence ones more aggressively than linear scaling.
+        conf_factor = max(0.1, signals.confidence ** 1.5)
 
         notional = max_risk_usd * vol_factor * conf_factor
 

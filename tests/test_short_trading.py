@@ -498,11 +498,19 @@ class TestSideSelector:
 
     def test_short_blocked_on_volatility_spike(self):
         sel = SideSelector(allow_shorts=True, require_futures_for_short=False)
-        sig = self._signals(volatility=0.8)  # above threshold 0.6
+        # High vol + positive momentum = squeeze risk blocks short
+        sig = self._signals(volatility=0.8, momentum=0.3)
         dec = sel.select(sig, market_type="futures", proposed_side="short")
         assert dec.side == "flat"
         assert dec.reason == "squeeze_risk"
         assert dec.squeeze_risk is True
+
+    def test_short_allowed_in_downtrend_high_vol(self):
+        """High volatility alone should NOT block shorts when momentum is negative (downtrend)."""
+        sel = SideSelector(allow_shorts=True, require_futures_for_short=False)
+        sig = self._signals(volatility=0.8, momentum=-0.4)
+        dec = sel.select(sig, market_type="futures", proposed_side="short")
+        assert dec.side == "short"
 
     def test_short_blocked_on_momentum_volume_spike(self):
         sel = SideSelector(allow_shorts=True, require_futures_for_short=False)
@@ -533,6 +541,15 @@ class TestSideSelector:
         dec = sel.select(sig, market_type="spot")
         # No short allowed → flat
         assert dec.side == "flat"
+
+    def test_derive_side_strong_signal_cross_regime(self):
+        """Strong trend + momentum should derive side even in UNKNOWN regime."""
+        sel = SideSelector(allow_shorts=True, require_futures_for_short=False)
+        sig = self._signals(
+            regime=Regime.UNKNOWN, trend_strength=0.7, momentum=0.4,
+        )
+        dec = sel.select(sig, market_type="futures")
+        assert dec.side == "long"
 
 
 # ---------------------------------------------------------------------------
@@ -677,8 +694,17 @@ class TestRiskManagerSqueezeRisk:
         from kucoin_bot.config import RiskConfig
         from kucoin_bot.services.risk_manager import RiskManager
         rm = RiskManager(config=RiskConfig())
-        sig = SignalScores(symbol="BTC-USDT", volatility=0.7)
+        # High vol + positive momentum triggers squeeze risk
+        sig = SignalScores(symbol="BTC-USDT", volatility=0.7, momentum=0.3)
         assert rm.check_squeeze_risk(sig) is True
+
+    def test_squeeze_risk_false_on_vol_spike_negative_momentum(self):
+        """High vol with negative momentum (downtrend) should NOT flag squeeze risk."""
+        from kucoin_bot.config import RiskConfig
+        from kucoin_bot.services.risk_manager import RiskManager
+        rm = RiskManager(config=RiskConfig())
+        sig = SignalScores(symbol="BTC-USDT", volatility=0.7, momentum=-0.3)
+        assert rm.check_squeeze_risk(sig) is False
 
     def test_squeeze_risk_true_on_momentum_volume_spike(self):
         from kucoin_bot.config import RiskConfig

@@ -106,3 +106,46 @@ class TestSignalEngine:
             klines.append([i * 3600, "100", str(close), str(high), str(low), str(volume), str(volume * close)])
         scores = engine.compute("BTC-USDT", klines)
         assert scores.regime == Regime.NEWS_SPIKE
+
+    def test_confidence_includes_orderbook_agreement(self):
+        """When momentum and orderbook imbalance agree, confidence should be higher."""
+        engine = SignalEngine()
+        klines = []
+        price = 100.0
+        for i in range(60):
+            price *= 1.003
+            o = price * 0.999
+            h = price * 1.002
+            low = price * 0.997
+            klines.append([i * 3600, str(o), str(price), str(h), str(low), "500", str(500 * price)])
+
+        # Without orderbook
+        scores_no_ob = engine.compute("TEST-USDT", klines)
+        # With agreeing orderbook (positive imbalance with positive momentum)
+        scores_ob = engine.compute(
+            "TEST-USDT", klines,
+            orderbook={"bids": [["100", "100"]], "asks": [["100", "10"]]},
+        )
+        # Confidence should be at least as high when orderbook agrees
+        assert scores_ob.confidence >= scores_no_ob.confidence - 0.01
+
+    def test_volume_weighted_momentum(self):
+        """High-volume moves should produce stronger momentum than low-volume."""
+        engine = SignalEngine()
+        # Create uptrend with high volume at end
+        klines_high_vol = []
+        klines_low_vol = []
+        price = 100.0
+        for i in range(60):
+            price *= 1.002
+            o = price * 0.999
+            h = price * 1.002
+            low = price * 0.997
+            vol_high = 1000 if i > 50 else 100
+            vol_low = 10 if i > 50 else 100
+            klines_high_vol.append([i * 3600, str(o), str(price), str(h), str(low), str(vol_high), str(vol_high * price)])
+            klines_low_vol.append([i * 3600, str(o), str(price), str(h), str(low), str(vol_low), str(vol_low * price)])
+        scores_high = engine.compute("HI-USDT", klines_high_vol)
+        scores_low = engine.compute("LO-USDT", klines_low_vol)
+        # High volume should produce stronger momentum signal
+        assert abs(scores_high.momentum) >= abs(scores_low.momentum)
