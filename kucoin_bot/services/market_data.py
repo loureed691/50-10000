@@ -148,6 +148,7 @@ class MarketDataService:
                 continue
             ticker = ticker_map.get(sym)
             if ticker is None:
+                logger.debug("No ticker data for %s, skipping enrichment", sym)
                 continue
             info.last_price = float(ticker.get("last", 0) or 0)
             info.volume_24h = float(ticker.get("volValue", 0) or 0)

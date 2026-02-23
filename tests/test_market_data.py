@@ -229,6 +229,6 @@ async def test_refresh_universe_continues_when_all_tickers_fails():
     service = MarketDataService(client=client)
     await service.refresh_universe()
 
-    # Spot pair has no price/volume → filtered out; futures survives
+    # Spot pair has no price/volume → filtered out; futures survive
     assert "BTC-USDT" not in service.universe
     assert "XBTUSDTM" in service.universe
