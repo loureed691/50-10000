@@ -452,11 +452,11 @@ async def run_live(cfg: BotConfig) -> None:
                             else:
                                 # Transfer funds if trading on a futures market
                                 mkt_type_entry = market.market_type if market else "spot"
-                                if mkt_type_entry == "futures":
+                                if mkt_type_entry == "futures" and cfg.allow_internal_transfers:
                                     xfer = await portfolio_mgr.transfer_if_needed(
                                         "USDT", "trade", "futures", trade_notional,
                                     )
-                                    if xfer is None and cfg.allow_internal_transfers:
+                                    if xfer is None:
                                         logger.warning("Futures transfer failed for %s, skipping entry", sym)
                                         continue
 
@@ -542,10 +542,8 @@ async def run_live(cfg: BotConfig) -> None:
                                     strategy_monitor.record_trade(alloc.strategy, pnl, trade_cost)
                                     # Transfer proceeds back from futures account
                                     if is_futures_exit:
-                                        exit_value = abs(pos.size * (
-                                            result.avg_price if result.avg_price > 0
-                                            else pos.entry_price
-                                        ))
+                                        margin = abs(pos.size * pos.entry_price / max(pos.leverage, 1.0))
+                                        exit_value = max(0, margin + pnl)
                                         await portfolio_mgr.transfer_if_needed(
                                             "USDT", "futures", "trade", exit_value,
                                         )

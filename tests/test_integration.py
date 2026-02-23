@@ -750,6 +750,11 @@ class TestTransferForFutures:
         result = await pm.transfer_if_needed("USDT", "trade", "futures", 500)
         assert result is not None  # should return idempotency key
         client.inner_transfer.assert_called_once()
+        call_kwargs = client.inner_transfer.call_args.kwargs
+        assert call_kwargs["currency"] == "USDT"
+        assert call_kwargs["from_account"] == "trade"
+        assert call_kwargs["to_account"] == "futures"
+        assert call_kwargs["amount"] == 500
 
     @pytest.mark.asyncio
     async def test_transfer_trade_to_futures_allowed(self):
