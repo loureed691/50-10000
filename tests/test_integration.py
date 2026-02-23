@@ -878,3 +878,45 @@ class TestTransferForFutures:
 
         result = await pm.transfer_if_needed("USDT", "trade", "futures", 0)
         assert result is None
+
+
+class TestFuturesSizingEndToEnd:
+    """Regression: allocation + position sizing must produce usable futures notional."""
+
+    def test_small_account_trade_notional_is_usable(self):
+        """With $50 equity the trade_notional for a futures entry must be >= $1.
+
+        Before the fix, vol_factor * conf_factor * weight shrank the value
+        to fractions of a cent.
+        """
+        client = MagicMock(spec=KuCoinClient)
+        risk_mgr = RiskManager(config=RiskConfig())
+        risk_mgr.update_equity(50)
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr)
+
+        signals = {
+            "NFPUSDTM": SignalScores(
+                symbol="NFPUSDTM",
+                regime=Regime.HIGH_VOLATILITY,
+                confidence=0.311,
+                volatility=1.0,
+                momentum=-0.5829,
+                trend_strength=0.2,
+                mean_reversion=0.411,
+                volume_anomaly=1.8607,
+            ),
+        }
+
+        allocs = pm.compute_allocations(signals, ["NFPUSDTM"])
+        alloc = allocs["NFPUSDTM"]
+
+        notional = risk_mgr.compute_position_size(
+            "NFPUSDTM", 0.05, signals["NFPUSDTM"].volatility,
+            signals["NFPUSDTM"], leverage=alloc.max_leverage,
+        )
+
+        # trade_notional is now just notional (no weight multiplier)
+        trade_notional = notional
+        assert trade_notional >= 1.0, (
+            f"trade_notional={trade_notional} is too small for a futures order"
+        )
