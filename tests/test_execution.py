@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -11,7 +10,6 @@ from kucoin_bot.config import RiskConfig
 from kucoin_bot.services.execution import (
     ExecutionEngine,
     OrderRequest,
-    OrderResult,
     _quantize,
     _quantize_futures_size,
 )

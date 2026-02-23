@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from kucoin_bot.backtest.engine import BacktestEngine, BacktestTrade
+from kucoin_bot.backtest.engine import BacktestEngine
 from kucoin_bot.config import RiskConfig
 from kucoin_bot.services.cost_model import CostModel, TradeCosts
-from kucoin_bot.services.side_selector import SideDecision, SideSelector
+from kucoin_bot.services.side_selector import SideSelector
 from kucoin_bot.services.signal_engine import Regime, SignalScores
 from kucoin_bot.services.strategy_monitor import StrategyMonitor
 from kucoin_bot.strategies.mean_reversion import MeanReversion
@@ -96,7 +96,7 @@ class TestShortPnLMathFutures:
         # Compute expected PnL
         entry_fee = qty * entry * fee_rate
         exit_fee = qty * exit_ * fee_rate
-        expected_pnl = (entry - exit_) * qty - entry_fee - exit_fee
+        _ = (entry - exit_) * qty - entry_fee - exit_fee  # expected_pnl (unused, kept for reference)
 
         # BacktestTrade pnl already deducts exit fee; entry fee is deducted from equity separately
         # For a raw check: pnl at exit = (entry - exit_) * qty - exit_fee
@@ -408,7 +408,6 @@ class TestReduceOnly:
     def test_futures_order_has_reduce_only_in_body(self):
         """place_futures_order must include reduceOnly=True in the request body when set."""
         import asyncio
-        import unittest.mock as mock
 
         call_args = {}
 
@@ -705,7 +704,6 @@ class TestRiskManagerSqueezeRisk:
     """RiskManager.check_squeeze_risk delegates to the shared squeeze heuristic."""
 
     def test_squeeze_risk_false_normal_conditions(self):
-        from kucoin_bot.config import RiskConfig
         from kucoin_bot.services.risk_manager import RiskManager
 
         rm = RiskManager(config=RiskConfig())
@@ -713,7 +711,6 @@ class TestRiskManagerSqueezeRisk:
         assert rm.check_squeeze_risk(sig) is False
 
     def test_squeeze_risk_true_on_vol_spike(self):
-        from kucoin_bot.config import RiskConfig
         from kucoin_bot.services.risk_manager import RiskManager
 
         rm = RiskManager(config=RiskConfig())
@@ -723,7 +720,6 @@ class TestRiskManagerSqueezeRisk:
 
     def test_squeeze_risk_false_on_vol_spike_negative_momentum(self):
         """High vol with negative momentum (downtrend) should NOT flag squeeze risk."""
-        from kucoin_bot.config import RiskConfig
         from kucoin_bot.services.risk_manager import RiskManager
 
         rm = RiskManager(config=RiskConfig())
@@ -731,7 +727,6 @@ class TestRiskManagerSqueezeRisk:
         assert rm.check_squeeze_risk(sig) is False
 
     def test_squeeze_risk_true_on_momentum_volume_spike(self):
-        from kucoin_bot.config import RiskConfig
         from kucoin_bot.services.risk_manager import RiskManager
 
         rm = RiskManager(config=RiskConfig())

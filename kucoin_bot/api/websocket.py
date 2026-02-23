@@ -46,7 +46,7 @@ class KuCoinWebSocket:
                 self._session = aiohttp.ClientSession()
             async with self._session.post(f"{self._rest_url}/api/v1/bullet-public") as resp:
                 data = await resp.json()
-                return data.get("data")
+                return dict(data.get("data")) if data.get("data") else None
         except Exception:
             logger.error("WS token request failed", exc_info=True)
             return None

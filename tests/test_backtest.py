@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
 from kucoin_bot.backtest.engine import BacktestEngine
-from kucoin_bot.config import RiskConfig
 from kucoin_bot.strategies.mean_reversion import MeanReversion
 from kucoin_bot.strategies.risk_off import RiskOff
 from kucoin_bot.strategies.trend import TrendFollowing

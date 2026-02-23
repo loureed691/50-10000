@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from kucoin_bot.api.client import KuCoinClient
-from kucoin_bot.services.risk_manager import PositionInfo, RiskManager
+from kucoin_bot.services.risk_manager import RiskManager
 from kucoin_bot.services.signal_engine import Regime, SignalScores
 
 logger = logging.getLogger(__name__)

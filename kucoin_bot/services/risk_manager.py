@@ -137,7 +137,7 @@ class RiskManager:
         max_total = self.current_equity * (self.config.max_total_exposure_pct / 100)
         remaining = max(0, max_total - existing_exposure)
         # remaining is in exposure units; convert to margin by dividing by leverage
-        notional = min(notional, remaining / max(leverage, 1.0))
+        notional = float(min(notional, remaining / max(leverage, 1.0)))
 
         # Skip if notional too small for one unit at current price
         if notional < price * _MIN_NOTIONAL_FACTOR:

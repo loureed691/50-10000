@@ -230,11 +230,11 @@ class KuCoinClient:
     async def get_symbols(self) -> List[dict]:
         """Fetch all trading symbols."""
         resp = await self._public_get("/api/v2/symbols")
-        return resp.get("data", [])
+        return list(resp.get("data", []))
 
     async def get_ticker(self, symbol: str) -> dict:
         resp = await self._public_get("/api/v1/market/orderbook/level1", {"symbol": symbol})
-        return resp.get("data", {})
+        return dict(resp.get("data", {}))
 
     async def get_klines(
         self,
@@ -249,11 +249,11 @@ class KuCoinClient:
         if end:
             params["endAt"] = end
         resp = await self._public_get("/api/v1/market/candles", params)
-        return resp.get("data", [])
+        return list(resp.get("data", []))
 
     async def get_orderbook(self, symbol: str, depth: int = 20) -> dict:
         resp = await self._public_get(f"/api/v1/market/orderbook/level2_{depth}", {"symbol": symbol})
-        return resp.get("data", {})
+        return dict(resp.get("data", {}))
 
     # ------------------------------------------------------------------
     # Account / balance endpoints
@@ -264,7 +264,7 @@ class KuCoinClient:
         if account_type:
             params["type"] = account_type
         resp = await self._request("GET", "/api/v1/accounts", params=params)
-        return resp.get("data", [])
+        return list(resp.get("data", []))
 
     async def get_account_balance(self, currency: str = "USDT") -> float:
         accounts = await self.get_accounts("trade")
@@ -313,14 +313,14 @@ class KuCoinClient:
 
     async def get_order(self, order_id: str) -> dict:
         resp = await self._request("GET", f"/api/v1/orders/{order_id}")
-        return resp.get("data", {})
+        return dict(resp.get("data", {}))
 
     async def get_open_orders(self, symbol: Optional[str] = None) -> List[dict]:
         params: dict = {"status": "active"}
         if symbol:
             params["symbol"] = symbol
         resp = await self._request("GET", "/api/v1/orders", params=params)
-        return resp.get("data", {}).get("items", [])
+        return list(dict(resp.get("data", {})).get("items", []))
 
     # ------------------------------------------------------------------
     # Internal transfer
@@ -349,13 +349,13 @@ class KuCoinClient:
 
     async def get_futures_contracts(self) -> List[dict]:
         resp = await self._request("GET", "/api/v1/contracts/active", signed=False, base_url=self._futures_rest_url)
-        return resp.get("data", [])
+        return list(resp.get("data", []))
 
     async def get_futures_ticker(self, symbol: str) -> dict:
         resp = await self._request(
             "GET", "/api/v1/ticker", params={"symbol": symbol}, signed=False, base_url=self._futures_rest_url
         )
-        return resp.get("data", {})
+        return dict(resp.get("data", {}))
 
     async def get_futures_klines(
         self,
@@ -373,7 +373,7 @@ class KuCoinClient:
         resp = await self._request(
             "GET", "/api/v1/kline/query", params=params, signed=False, base_url=self._futures_rest_url
         )
-        return resp.get("data", [])
+        return list(resp.get("data", []))
 
     async def get_futures_funding_rate(self, symbol: str) -> dict:
         """Fetch current funding rate for a futures symbol."""
@@ -383,18 +383,18 @@ class KuCoinClient:
             signed=False,
             base_url=self._futures_rest_url,
         )
-        return resp.get("data", {})
+        return dict(resp.get("data", {}))
 
     async def get_futures_position(self, symbol: str) -> dict:
         resp = await self._request(
             "GET", "/api/v1/position", params={"symbol": symbol}, base_url=self._futures_rest_url
         )
-        return resp.get("data", {})
+        return dict(resp.get("data", {}))
 
     async def get_futures_positions(self) -> List[dict]:
         """Fetch all open futures positions."""
         resp = await self._request("GET", "/api/v1/positions", base_url=self._futures_rest_url)
-        return resp.get("data", [])
+        return list(resp.get("data", []))
 
     async def place_futures_order(
         self,
@@ -424,7 +424,7 @@ class KuCoinClient:
     async def get_futures_order(self, order_id: str) -> dict:
         """Get a single futures order by ID."""
         resp = await self._request("GET", f"/api/v1/orders/{order_id}", base_url=self._futures_rest_url)
-        return resp.get("data", {})
+        return dict(resp.get("data", {}))
 
     async def get_futures_open_orders(self, symbol: Optional[str] = None) -> List[dict]:
         """List open futures orders."""
@@ -432,7 +432,7 @@ class KuCoinClient:
         if symbol:
             params["symbol"] = symbol
         resp = await self._request("GET", "/api/v1/orders", params=params, base_url=self._futures_rest_url)
-        return resp.get("data", {}).get("items", [])
+        return list(dict(resp.get("data", {})).get("items", []))
 
     async def cancel_futures_order(self, order_id: str) -> dict:
         """Cancel a single futures order."""

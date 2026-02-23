@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from kucoin_bot.services.signal_engine import Regime, SignalEngine

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from kucoin_bot.services.signal_engine import Regime, SignalScores
 from kucoin_bot.strategies.hedge import HedgeMode
 from kucoin_bot.strategies.mean_reversion import MeanReversion

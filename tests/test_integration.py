@@ -392,13 +392,12 @@ class TestPaperMode:
     async def test_paper_mode_does_not_call_place_order(self, monkeypatch):
         """In PAPER mode run_live() must NOT call client.place_order for entries."""
         import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock
 
         from kucoin_bot.__main__ import run_live
         from kucoin_bot.api.client import KuCoinClient
         from kucoin_bot.config import BotConfig, RiskConfig
         from kucoin_bot.services.market_data import MarketDataService, MarketInfo
-        from kucoin_bot.services.signal_engine import Regime, SignalScores
 
         cfg = BotConfig(
             mode="PAPER",

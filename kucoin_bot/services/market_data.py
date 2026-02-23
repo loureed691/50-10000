@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 from kucoin_bot.api.client import KuCoinClient
 
@@ -169,9 +168,9 @@ class MarketDataService:
 
         cached = self._kline_cache.get(cache_key)
         if cached is not None:
-            data, ts = cached
+            cached_data, ts = cached
             if now - ts < _KLINE_CACHE_TTL:
-                return data
+                return list(cached_data)
 
         now_int = int(now)
         period = _KLINE_PERIOD_SECONDS.get(kline_type, 3600)
@@ -191,9 +190,9 @@ class MarketDataService:
 
         cached = self._kline_cache.get(cache_key)
         if cached is not None:
-            data, ts = cached
+            cached_data, ts = cached
             if now - ts < _KLINE_CACHE_TTL:
-                return data
+                return list(cached_data)
 
         now_int = int(now)
         granularity = _FUTURES_GRANULARITY.get(kline_type, 60)
@@ -203,16 +202,16 @@ class MarketDataService:
         raw = await self.client.get_futures_klines(symbol, granularity, start=start_ms, end=end_ms)
         # Futures klines format: [time_ms, open, high, low, close, volume]
         # Convert to spot-compatible format: [time_s, open, close, high, low, volume, turnover]
-        data: List[list] = []
+        result: List[list] = []
         for k in raw:
             if len(k) >= 6:
                 ts_s = int(k[0]) // 1000 if int(k[0]) > 1e12 else int(k[0])
                 o, h, l_, c, v = float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])
-                data.append([str(ts_s), str(o), str(c), str(h), str(l_), str(v), str(v * c)])
-        if data and len(data) > 1:
-            data = sorted(data, key=lambda k: int(k[0]))
-        self._kline_cache[cache_key] = (data, now)
-        return data
+                result.append([str(ts_s), str(o), str(c), str(h), str(l_), str(v), str(v * c)])
+        if result and len(result) > 1:
+            result = sorted(result, key=lambda k: int(k[0]))
+        self._kline_cache[cache_key] = (result, now)
+        return result
 
     def get_symbols(self) -> List[str]:
         return list(self.universe.keys())

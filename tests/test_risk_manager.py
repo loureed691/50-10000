@@ -6,7 +6,7 @@ import pytest
 
 from kucoin_bot.config import RiskConfig
 from kucoin_bot.services.risk_manager import PositionInfo, RiskManager
-from kucoin_bot.services.signal_engine import Regime, SignalScores
+from kucoin_bot.services.signal_engine import SignalScores
 
 
 class TestRiskManager:

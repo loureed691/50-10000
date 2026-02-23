@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 import random
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
 from kucoin_bot.config import RiskConfig
-from kucoin_bot.services.cost_model import CostModel, TradeCosts
-from kucoin_bot.services.risk_manager import PositionInfo, RiskManager
+from kucoin_bot.services.cost_model import CostModel
+from kucoin_bot.services.risk_manager import RiskManager
 from kucoin_bot.services.side_selector import SideSelector
 from kucoin_bot.services.signal_engine import SignalEngine, SignalScores
 from kucoin_bot.strategies.base import BaseStrategy, StrategyDecision

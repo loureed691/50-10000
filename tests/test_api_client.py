@@ -5,10 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 import urllib.parse
-
-import pytest
 
 from kucoin_bot.api.client import KuCoinAPIError, KuCoinClient
 
@@ -32,9 +29,7 @@ class TestSignatureGeneration:
         expected_sig = base64.b64encode(
             hmac.new(b"test-secret", expected_str.encode(), hashlib.sha256).digest()
         ).decode()
-        expected_pass = base64.b64encode(
-            hmac.new(b"test-secret", b"test-pass", hashlib.sha256).digest()
-        ).decode()
+        expected_pass = base64.b64encode(hmac.new(b"test-secret", b"test-pass", hashlib.sha256).digest()).decode()
 
         assert headers["KC-API-KEY"] == "test-key"
         assert headers["KC-API-SIGN"] == expected_sig

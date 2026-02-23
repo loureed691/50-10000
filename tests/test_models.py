@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from kucoin_bot.models import Order, SignalSnapshot, Trade, init_db
 
 

@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
-from typing import Dict, List, Optional
+from typing import Optional
 
 from kucoin_bot.api.client import KuCoinClient
 from kucoin_bot.services.market_data import MarketInfo
@@ -165,9 +164,7 @@ class ExecutionEngine:
                     if self.poll_fills and oid:
                         return await self._poll_order(oid, is_futures, price, size)
 
-                    return OrderResult(
-                        success=True, order_id=oid, avg_price=price, filled_qty=size, status="pending"
-                    )
+                    return OrderResult(success=True, order_id=oid, avg_price=price, filled_qty=size, status="pending")
                 else:
                     msg = result.get("msg", str(result))
                     logger.warning("Order rejected (attempt %d): %s", attempt, msg)

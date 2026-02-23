@@ -290,9 +290,9 @@ async def run_live(cfg: BotConfig) -> None:
             logger.critical("KILL SWITCH activated – cancelling all orders and flattening positions")
             if not is_shadow and not is_paper:
                 await exec_engine.cancel_all()
-            for sym, pos in list(risk_mgr.positions.items()):
-                if pos.size > 0:
-                    close_price = pos.current_price or pos.entry_price
+            for sym, kill_pos in list(risk_mgr.positions.items()):
+                if kill_pos.size > 0:
+                    close_price = kill_pos.current_price or kill_pos.entry_price
                     if close_price <= 0:
                         logger.error("No price for %s, cannot flatten", sym)
                         continue
@@ -300,11 +300,11 @@ async def run_live(cfg: BotConfig) -> None:
                         if not is_shadow and not is_paper:
                             await exec_engine.flatten_position(
                                 sym,
-                                pos.size,
+                                kill_pos.size,
                                 close_price,
-                                pos.side,
+                                kill_pos.side,
                             )
-                        risk_mgr.update_position(sym, PositionInfo(symbol=sym, side=pos.side, size=0))
+                        risk_mgr.update_position(sym, PositionInfo(symbol=sym, side=kill_pos.side, size=0))
                     except Exception:
                         logger.error("Failed to flatten %s", sym, exc_info=True)
             break
