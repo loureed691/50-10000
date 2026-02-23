@@ -25,11 +25,13 @@ class TestExecutionEngine:
             }
         )
         client.get_open_orders = AsyncMock(return_value=[])
+        client.get_futures_open_orders = AsyncMock(return_value=[])
         client.cancel_order = AsyncMock(return_value={})
+        client.cancel_futures_order = AsyncMock(return_value={})
         risk_mgr = RiskManager(config=RiskConfig())
         risk_mgr.update_equity(10_000)
         risk_mgr.circuit_breaker_active = circuit_breaker
-        return ExecutionEngine(client=client, risk_mgr=risk_mgr)
+        return ExecutionEngine(client=client, risk_mgr=risk_mgr, poll_fills=False)
 
     @pytest.mark.asyncio
     async def test_execute_order(self):
@@ -719,7 +721,7 @@ class TestLeveragePositionSizing:
         )
         risk_mgr = RiskManager(config=RiskConfig())
         risk_mgr.update_equity(10_000)
-        engine = ExecutionEngine(client=client, risk_mgr=risk_mgr)
+        engine = ExecutionEngine(client=client, risk_mgr=risk_mgr, poll_fills=False)
 
         market = MarketInfo(
             symbol="BTC-USDT",
@@ -759,7 +761,7 @@ class TestLeveragePositionSizing:
         )
         risk_mgr = RiskManager(config=RiskConfig())
         risk_mgr.update_equity(10_000)
-        engine = ExecutionEngine(client=client, risk_mgr=risk_mgr)
+        engine = ExecutionEngine(client=client, risk_mgr=risk_mgr, poll_fills=False)
 
         market = MarketInfo(
             symbol="ETH-USDT",
