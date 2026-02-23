@@ -89,11 +89,20 @@ class TestVolatilityBreakout:
         )
         assert strat.preconditions_met(sig) is True
 
-    def test_no_entry_low_volume(self):
+    def test_preconditions_above_average_volume(self):
+        """Above-average volume (volume_anomaly > 0) should pass preconditions."""
         strat = VolatilityBreakout()
         sig = SignalScores(
             symbol="BTC-USDT", regime=Regime.HIGH_VOLATILITY,
             momentum=0.5, volume_anomaly=0.5,
+        )
+        assert strat.preconditions_met(sig) is True
+
+    def test_no_entry_low_volume(self):
+        strat = VolatilityBreakout()
+        sig = SignalScores(
+            symbol="BTC-USDT", regime=Regime.HIGH_VOLATILITY,
+            momentum=0.5, volume_anomaly=-0.5,
         )
         assert strat.preconditions_met(sig) is False
 

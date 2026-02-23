@@ -95,6 +95,17 @@ class TestRiskManager:
         assert rm.daily_pnl == 0.0
         assert rm.circuit_breaker_active is True
 
+    def test_position_sizing_high_vol_uses_floor(self):
+        """Volatility=1.0 should use the vol_factor floor (0.2), not zero."""
+        rm = self._make_risk_mgr(10_000)
+        signals = SignalScores(symbol="ZEC-USDT", confidence=0.5, volatility=1.0)
+        size = rm.compute_position_size("ZEC-USDT", 30, 1.0, signals)
+        # vol_factor = max(0.2, 1.0 - 1.0) = 0.2
+        # notional = 200 * 0.2 * 0.5 = 20
+        assert size > 0
+        expected = 10_000 * 0.02 * 0.2 * 0.5
+        assert size == pytest.approx(expected, rel=0.01)
+
     def test_correlated_exposure_below_limit(self):
         rm = self._make_risk_mgr(10_000)
         rm.positions["BTC-USDT"] = PositionInfo(

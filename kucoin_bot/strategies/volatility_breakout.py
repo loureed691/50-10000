@@ -21,7 +21,7 @@ class VolatilityBreakout(BaseStrategy):
         return (
             signals.regime == Regime.HIGH_VOLATILITY
             and abs(signals.momentum) >= self.momentum_min
-            and signals.volume_anomaly > 1.0
+            and signals.volume_anomaly > 0.0
         )
 
     def evaluate(
