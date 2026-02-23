@@ -27,11 +27,15 @@ def _quantize(value: float, increment: float, rounding: str = ROUND_DOWN) -> flo
 
 
 def _quantize_futures_size(raw_size: float, lot_size: int = 1) -> int:
-    """Quantize a futures size to an integer number of contracts (lot-size aligned)."""
+    """Quantize a futures size to an integer number of contracts (lot-size aligned).
+
+    Returns 0 when *raw_size* is too small for even one lot so that the caller
+    can reject the order via the ``below_min_size`` check.
+    """
     if lot_size <= 0:
         lot_size = 1
     contracts = int(raw_size / lot_size) * lot_size
-    return max(contracts, lot_size)
+    return max(contracts, 0)
 
 
 @dataclass

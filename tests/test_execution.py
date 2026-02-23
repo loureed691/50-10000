@@ -44,8 +44,8 @@ class TestQuantizeFuturesSize:
     def test_lot_size_multiple(self) -> None:
         assert _quantize_futures_size(25.0, lot_size=10) == 20
 
-    def test_below_lot_size_returns_min(self) -> None:
-        assert _quantize_futures_size(0.5, lot_size=1) == 1
+    def test_below_lot_size_returns_zero(self) -> None:
+        assert _quantize_futures_size(0.5, lot_size=1) == 0
 
     def test_zero_lot_size_defaults(self) -> None:
         assert _quantize_futures_size(5.0, lot_size=0) == 5
@@ -132,6 +132,28 @@ class TestExecutionEngine:
         result = await engine.execute(req, market)
         assert not result.success
         assert result.message == "below_min_size"
+
+    @pytest.mark.asyncio
+    async def test_futures_below_min_size_rejected(self) -> None:
+        """Tiny notional on futures should be rejected instead of placing an under-funded order."""
+        engine, client = self._make_engine()
+        market = MarketInfo(
+            symbol="TUTUSDTM",
+            base="TUT",
+            quote="USDT",
+            base_min_size=1.0,
+            price_increment=0.0001,
+            last_price=0.01,
+            market_type="futures",
+            contract_multiplier=1.0,
+            lot_size=1,
+        )
+        # Notional so small that it yields < 1 contract
+        req = OrderRequest(symbol="TUTUSDTM", side="buy", notional=0.005, order_type="market")
+        result = await engine.execute(req, market)
+        assert not result.success
+        assert result.message == "below_min_size"
+        client.place_futures_order.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cancel_all_spot_and_futures(self) -> None:
