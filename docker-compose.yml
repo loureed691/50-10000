@@ -8,7 +8,7 @@ services:
       - BOT_MODE=${BOT_MODE:-BACKTEST}
       - KILL_SWITCH=${KILL_SWITCH:-false}
       - DB_TYPE=${DB_TYPE:-sqlite}
-      - DB_URL=${DB_URL:-sqlite:///kucoin_bot.db}
+      - DB_URL=${DB_URL:-sqlite:////app/data/kucoin_bot.db}
     volumes:
       - bot-data:/app/data
     restart: unless-stopped

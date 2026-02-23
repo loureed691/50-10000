@@ -12,9 +12,9 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 # KuCoin default fee tiers (Level 1)
-DEFAULT_MAKER_FEE = 0.001     # 0.1 %
-DEFAULT_TAKER_FEE = 0.001     # 0.1 %
-DEFAULT_SLIPPAGE_BPS = 2.0    # 0.02 % one-way
+DEFAULT_MAKER_FEE = 0.001  # 0.1 %
+DEFAULT_TAKER_FEE = 0.001  # 0.1 %
+DEFAULT_SLIPPAGE_BPS = 2.0  # 0.02 % one-way
 
 # Perpetual funding is settled every 8 hours on KuCoin.
 # Typical neutral rate; heavily directional markets can see higher absolute values.
@@ -28,10 +28,10 @@ DEFAULT_BORROW_RATE_PER_HOUR = 0.00003  # ~0.003 %/hr → ~0.072 %/day
 class TradeCosts:
     """Decomposed round-trip cost breakdown in basis points."""
 
-    fee_bps: float = 0.0        # entry + exit fees
-    slippage_bps: float = 0.0   # entry + exit slippage
-    funding_bps: float = 0.0    # futures funding cost while open
-    borrow_bps: float = 0.0     # margin borrow interest while open
+    fee_bps: float = 0.0  # entry + exit fees
+    slippage_bps: float = 0.0  # entry + exit slippage
+    funding_bps: float = 0.0  # futures funding cost while open
+    borrow_bps: float = 0.0  # margin borrow interest while open
 
     @property
     def total_bps(self) -> float:
@@ -103,8 +103,8 @@ class CostModel:
                 worst-case estimate independent of direction.
         """
         fee_rate = self.taker_fee if order_type == "taker" else self.maker_fee
-        fee_bps = fee_rate * 2 * 10_000           # round-trip (entry + exit)
-        slippage_bps = self.slippage_bps * 2      # round-trip
+        fee_bps = fee_rate * 2 * 10_000  # round-trip (entry + exit)
+        slippage_bps = self.slippage_bps * 2  # round-trip
 
         funding_bps = 0.0
         if is_futures:

@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from kucoin_bot.backtest.engine import BacktestEngine, BacktestTrade
+from kucoin_bot.backtest.engine import BacktestEngine
 from kucoin_bot.config import RiskConfig
 from kucoin_bot.services.cost_model import CostModel, TradeCosts
-from kucoin_bot.services.side_selector import SideSelector, SideDecision
+from kucoin_bot.services.side_selector import SideSelector
+from kucoin_bot.services.signal_engine import Regime, SignalScores
 from kucoin_bot.services.strategy_monitor import StrategyMonitor
-from kucoin_bot.services.signal_engine import SignalScores, Regime
-from kucoin_bot.strategies.trend import TrendFollowing
 from kucoin_bot.strategies.mean_reversion import MeanReversion
-
+from kucoin_bot.strategies.trend import TrendFollowing
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_trending_down_klines(n: int = 200) -> list:
     """Klines with a clear downtrend – generates short signals."""
@@ -34,6 +34,7 @@ def _make_trending_down_klines(n: int = 200) -> list:
 def _make_ranging_klines(n: int = 200) -> list:
     """Klines oscillating in a tight range (for mean-reversion short signals)."""
     import numpy as np
+
     rng = np.random.RandomState(77)
     klines = []
     price = 100.0
@@ -49,6 +50,7 @@ def _make_ranging_klines(n: int = 200) -> list:
 # ---------------------------------------------------------------------------
 # 1. Short position PnL math – futures
 # ---------------------------------------------------------------------------
+
 
 class TestShortPnLMathFutures:
     """Verify futures short PnL = (entry - exit) * size - fees - funding."""
@@ -94,7 +96,7 @@ class TestShortPnLMathFutures:
         # Compute expected PnL
         entry_fee = qty * entry * fee_rate
         exit_fee = qty * exit_ * fee_rate
-        expected_pnl = (entry - exit_) * qty - entry_fee - exit_fee
+        _ = (entry - exit_) * qty - entry_fee - exit_fee  # expected_pnl (unused, kept for reference)
 
         # BacktestTrade pnl already deducts exit fee; entry fee is deducted from equity separately
         # For a raw check: pnl at exit = (entry - exit_) * qty - exit_fee
@@ -116,6 +118,7 @@ class TestShortPnLMathFutures:
 # ---------------------------------------------------------------------------
 # 2. Short position PnL math – margin
 # ---------------------------------------------------------------------------
+
 
 class TestShortPnLMathMargin:
     """Verify margin short includes borrow cost."""
@@ -145,6 +148,7 @@ class TestShortPnLMathMargin:
 # ---------------------------------------------------------------------------
 # 3. Funding / borrow cost application
 # ---------------------------------------------------------------------------
+
 
 class TestFundingAndBorrowCosts:
     """Verify cost model computes funding and borrow correctly."""
@@ -254,6 +258,7 @@ class TestFundingAndBorrowCosts:
 # 4. EV gate blocks trades when costs exceed edge
 # ---------------------------------------------------------------------------
 
+
 class TestEVGate:
     """Verify the CostModel EV gate rejects low-edge trades."""
 
@@ -297,6 +302,7 @@ class TestEVGate:
             min_ev_bps=10_000,
         )
         import numpy as np
+
         rng = np.random.RandomState(42)
         n = 200
         price = 30000.0
@@ -351,6 +357,7 @@ class TestEVGate:
 # 5. No look-ahead enforcement
 # ---------------------------------------------------------------------------
 
+
 class TestNoLookAhead:
     """Signal at bar i must fill at bar i+1 open, not bar i close."""
 
@@ -385,12 +392,14 @@ class TestNoLookAhead:
 # 6. reduceOnly exits used in futures
 # ---------------------------------------------------------------------------
 
+
 class TestReduceOnly:
     """OrderRequest must set reduce_only=True for futures exits."""
 
     def test_reduce_only_flag_on_order_request(self):
         """OrderRequest with reduce_only=True should be distinct from default."""
         from kucoin_bot.services.execution import OrderRequest
+
         req_normal = OrderRequest(symbol="BTC-USDT", side="sell", notional=100.0)
         req_reduce = OrderRequest(symbol="BTC-USDT", side="sell", notional=100.0, reduce_only=True)
         assert req_normal.reduce_only is False
@@ -399,7 +408,6 @@ class TestReduceOnly:
     def test_futures_order_has_reduce_only_in_body(self):
         """place_futures_order must include reduceOnly=True in the request body when set."""
         import asyncio
-        import unittest.mock as mock
 
         call_args = {}
 
@@ -408,6 +416,7 @@ class TestReduceOnly:
             return {"code": "200000", "data": {"orderId": "x"}}
 
         from kucoin_bot.api.client import KuCoinClient
+
         client = KuCoinClient.__new__(KuCoinClient)
         client._api_key = "k"
         client._api_secret = "s"
@@ -419,12 +428,14 @@ class TestReduceOnly:
         client._time_offset_ms = 0
         client._request = fake_request
 
-        asyncio.run(client.place_futures_order(
-            symbol="XBTUSDTM",
-            side="sell",
-            size=1,
-            reduce_only=True,
-        ))
+        asyncio.run(
+            client.place_futures_order(
+                symbol="XBTUSDTM",
+                side="sell",
+                size=1,
+                reduce_only=True,
+            )
+        )
         assert call_args.get("body", {}).get("reduceOnly") is True
 
     def test_futures_order_no_reduce_only_by_default(self):
@@ -438,6 +449,7 @@ class TestReduceOnly:
             return {"code": "200000", "data": {"orderId": "x"}}
 
         from kucoin_bot.api.client import KuCoinClient
+
         client = KuCoinClient.__new__(KuCoinClient)
         client._api_key = "k"
         client._api_secret = "s"
@@ -449,17 +461,20 @@ class TestReduceOnly:
         client._time_offset_ms = 0
         client._request = fake_request
 
-        asyncio.run(client.place_futures_order(
-            symbol="XBTUSDTM",
-            side="sell",
-            size=1,
-        ))
+        asyncio.run(
+            client.place_futures_order(
+                symbol="XBTUSDTM",
+                side="sell",
+                size=1,
+            )
+        )
         assert "reduceOnly" not in call_args.get("body", {})
 
 
 # ---------------------------------------------------------------------------
 # 7. Side selector and squeeze filter
 # ---------------------------------------------------------------------------
+
 
 class TestSideSelector:
     """Verify side selector blocks shorts under squeeze and crowding conditions."""
@@ -546,7 +561,9 @@ class TestSideSelector:
         """Strong trend + momentum should derive side even in UNKNOWN regime."""
         sel = SideSelector(allow_shorts=True, require_futures_for_short=False)
         sig = self._signals(
-            regime=Regime.UNKNOWN, trend_strength=0.7, momentum=0.4,
+            regime=Regime.UNKNOWN,
+            trend_strength=0.7,
+            momentum=0.4,
         )
         dec = sel.select(sig, market_type="futures")
         assert dec.side == "long"
@@ -555,6 +572,7 @@ class TestSideSelector:
 # ---------------------------------------------------------------------------
 # 8. Strategy monitor
 # ---------------------------------------------------------------------------
+
 
 class TestStrategyMonitor:
     """Verify rolling PnL tracking and auto-disable behaviour."""
@@ -601,8 +619,8 @@ class TestStrategyMonitor:
 
     def test_net_expectancy_correct(self):
         monitor = StrategyMonitor()
-        monitor.record_trade("hedge", pnl=10.0, cost=2.0)   # net = 8
-        monitor.record_trade("hedge", pnl=6.0, cost=2.0)    # net = 4
+        monitor.record_trade("hedge", pnl=10.0, cost=2.0)  # net = 8
+        monitor.record_trade("hedge", pnl=6.0, cost=2.0)  # net = 4
         # avg net = (8 + 4) / 2 = 6
         status = monitor.get_status()
         assert status["hedge"]["net_expectancy"] == pytest.approx(6.0, abs=0.001)
@@ -611,6 +629,7 @@ class TestStrategyMonitor:
 # ---------------------------------------------------------------------------
 # 9. BacktestResult per-side stats and cost breakdown
 # ---------------------------------------------------------------------------
+
 
 class TestBacktestResultPerSide:
     """Verify per-side PnL and cost breakdown fields."""
@@ -680,19 +699,20 @@ class TestBacktestResultPerSide:
 # 10. Risk manager squeeze risk check
 # ---------------------------------------------------------------------------
 
+
 class TestRiskManagerSqueezeRisk:
     """RiskManager.check_squeeze_risk delegates to the shared squeeze heuristic."""
 
     def test_squeeze_risk_false_normal_conditions(self):
-        from kucoin_bot.config import RiskConfig
         from kucoin_bot.services.risk_manager import RiskManager
+
         rm = RiskManager(config=RiskConfig())
         sig = SignalScores(symbol="BTC-USDT", volatility=0.3, momentum=0.2, volume_anomaly=1.0)
         assert rm.check_squeeze_risk(sig) is False
 
     def test_squeeze_risk_true_on_vol_spike(self):
-        from kucoin_bot.config import RiskConfig
         from kucoin_bot.services.risk_manager import RiskManager
+
         rm = RiskManager(config=RiskConfig())
         # High vol + positive momentum triggers squeeze risk
         sig = SignalScores(symbol="BTC-USDT", volatility=0.7, momentum=0.3)
@@ -700,15 +720,15 @@ class TestRiskManagerSqueezeRisk:
 
     def test_squeeze_risk_false_on_vol_spike_negative_momentum(self):
         """High vol with negative momentum (downtrend) should NOT flag squeeze risk."""
-        from kucoin_bot.config import RiskConfig
         from kucoin_bot.services.risk_manager import RiskManager
+
         rm = RiskManager(config=RiskConfig())
         sig = SignalScores(symbol="BTC-USDT", volatility=0.7, momentum=-0.3)
         assert rm.check_squeeze_risk(sig) is False
 
     def test_squeeze_risk_true_on_momentum_volume_spike(self):
-        from kucoin_bot.config import RiskConfig
         from kucoin_bot.services.risk_manager import RiskManager
+
         rm = RiskManager(config=RiskConfig())
         sig = SignalScores(symbol="BTC-USDT", volatility=0.2, momentum=0.6, volume_anomaly=3.0)
         assert rm.check_squeeze_risk(sig) is True

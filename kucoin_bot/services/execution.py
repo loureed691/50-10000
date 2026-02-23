@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
-from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
+from typing import Optional
 
 from kucoin_bot.api.client import KuCoinClient
 from kucoin_bot.services.market_data import MarketInfo
@@ -14,11 +15,23 @@ from kucoin_bot.services.risk_manager import RiskManager
 
 logger = logging.getLogger(__name__)
 
+# Maximum time (seconds) to poll an order before timing out
+_ORDER_POLL_TIMEOUT = 120
+_ORDER_POLL_INTERVAL = 2
+
 
 def _quantize(value: float, increment: float, rounding: str = ROUND_DOWN) -> float:
     """Quantize *value* to the nearest *increment* using exact Decimal math."""
     inc = Decimal(str(increment))
     return float(Decimal(str(value)).quantize(inc, rounding=rounding))
+
+
+def _quantize_futures_size(raw_size: float, lot_size: int = 1) -> int:
+    """Quantize a futures size to an integer number of contracts (lot-size aligned)."""
+    if lot_size <= 0:
+        lot_size = 1
+    contracts = int(raw_size / lot_size) * lot_size
+    return max(contracts, lot_size)
 
 
 @dataclass
@@ -47,6 +60,7 @@ class OrderResult:
     filled_qty: float = 0.0
     avg_price: float = 0.0
     message: str = ""
+    status: str = ""  # pending / filled / partially_filled / cancelled
 
 
 @dataclass
@@ -57,6 +71,7 @@ class ExecutionEngine:
     risk_mgr: RiskManager
     max_spread_bps: float = 50.0
     max_retries: int = 3
+    poll_fills: bool = True  # whether to poll order status after placement
 
     async def execute(self, req: OrderRequest, market: Optional[MarketInfo] = None) -> OrderResult:
         """Execute an order with safety checks."""
@@ -69,7 +84,9 @@ class ExecutionEngine:
         if market and market.spread_bps > self.max_spread_bps:
             logger.warning(
                 "Spread too wide for %s: %.1f bps (max %.1f)",
-                req.symbol, market.spread_bps, self.max_spread_bps,
+                req.symbol,
+                market.spread_bps,
+                self.max_spread_bps,
             )
             return OrderResult(success=False, message="spread_too_wide")
 
@@ -78,33 +95,42 @@ class ExecutionEngine:
         if price <= 0:
             return OrderResult(success=False, message="no_price")
 
+        is_futures = market is not None and market.market_type == "futures"
         size = req.notional * req.leverage / price
+
         if market:
-            # Respect min size
-            if size < market.base_min_size:
-                return OrderResult(success=False, message="below_min_size")
-            # Round to increment
-            if market.base_increment > 0:
-                size = _quantize(size, market.base_increment, ROUND_DOWN)
+            if is_futures:
+                # Futures: size is in integer contracts, use lot_size for rounding
+                multiplier = market.contract_multiplier if market.contract_multiplier > 0 else 1.0
+                raw_contracts = size / multiplier if multiplier != 0 else size
+                lot_size = market.lot_size if market.lot_size > 0 else 1
+                int_size = _quantize_futures_size(raw_contracts, lot_size)
+                if int_size < lot_size:
+                    return OrderResult(success=False, message="below_min_size")
+                size = float(int_size)
+            else:
+                # Spot: respect min size and round to base_increment
+                if size < market.base_min_size:
+                    return OrderResult(success=False, message="below_min_size")
+                if market.base_increment > 0:
+                    size = _quantize(size, market.base_increment, ROUND_DOWN)
+
             if market.price_increment > 0:
                 price = _quantize(price, market.price_increment, ROUND_HALF_UP)
 
         # Determine order type policy
         order_type = req.order_type
-        if req.side == "buy" and order_type == "limit" and not req.post_only:
-            # Use limit for entries, market only for stop-outs
-            pass
 
         client_oid = str(uuid.uuid4())
 
         for attempt in range(self.max_retries):
             try:
                 # Route futures orders through the dedicated futures endpoint
-                if market and market.market_type == "futures":
+                if is_futures:
                     result = await self.client.place_futures_order(
                         symbol=req.symbol,
                         side=req.side,
-                        size=round(size),
+                        size=int(size),
                         leverage=req.leverage,
                         order_type=order_type,
                         price=price if order_type == "limit" else None,
@@ -125,9 +151,20 @@ class ExecutionEngine:
                     oid = result.get("data", {}).get("orderId", "")
                     logger.info(
                         "Order placed: %s %s %.6f %s @ %.4f (oid=%s, reason=%s)",
-                        req.side, req.symbol, size, order_type, price, oid, req.reason,
+                        req.side,
+                        req.symbol,
+                        size,
+                        order_type,
+                        price,
+                        oid,
+                        req.reason,
                     )
-                    return OrderResult(success=True, order_id=oid, avg_price=price, filled_qty=size)
+
+                    # Poll for fill confirmation instead of assuming filled
+                    if self.poll_fills and oid:
+                        return await self._poll_order(oid, is_futures, price, size)
+
+                    return OrderResult(success=True, order_id=oid, avg_price=price, filled_qty=size, status="pending")
                 else:
                     msg = result.get("msg", str(result))
                     logger.warning("Order rejected (attempt %d): %s", attempt, msg)
@@ -136,22 +173,105 @@ class ExecutionEngine:
 
         return OrderResult(success=False, message="max_retries_exceeded")
 
-    async def cancel_all(self, symbol: Optional[str] = None) -> int:
-        """Cancel all open orders, optionally for a specific symbol."""
-        open_orders = await self.client.get_open_orders(symbol)
-        cancelled = 0
-        for o in open_orders:
+    async def _poll_order(
+        self, order_id: str, is_futures: bool, expected_price: float, expected_qty: float
+    ) -> OrderResult:
+        """Poll order status until filled, partially filled, or timed out."""
+        elapsed = 0.0
+        while elapsed < _ORDER_POLL_TIMEOUT:
             try:
-                await self.client.cancel_order(o["id"])
-                cancelled += 1
+                if is_futures:
+                    order = await self.client.get_futures_order(order_id)
+                else:
+                    order = await self.client.get_order(order_id)
+
+                if not order:
+                    break
+
+                is_active = order.get("isActive", True)
+                deal_size = float(order.get("dealSize", 0) or 0)
+                deal_funds = float(order.get("dealFunds", 0) or 0)
+                cancel_exist = order.get("cancelExist", False)
+
+                if not is_active:
+                    # Order is done (filled or cancelled)
+                    if deal_size > 0:
+                        avg_price = deal_funds / deal_size if deal_size > 0 else expected_price
+                        status = "filled" if not cancel_exist else "partially_filled"
+                        return OrderResult(
+                            success=True,
+                            order_id=order_id,
+                            filled_qty=deal_size,
+                            avg_price=avg_price,
+                            status=status,
+                        )
+                    else:
+                        return OrderResult(
+                            success=False,
+                            order_id=order_id,
+                            message="order_cancelled",
+                            status="cancelled",
+                        )
+
+                if deal_size > 0:
+                    # Partial fill while still active
+                    logger.debug("Order %s partially filled: %.6f", order_id, deal_size)
+
             except Exception:
-                logger.error("Failed to cancel order %s", o.get("id"), exc_info=True)
+                logger.warning("Error polling order %s", order_id, exc_info=True)
+
+            await asyncio.sleep(_ORDER_POLL_INTERVAL)
+            elapsed += _ORDER_POLL_INTERVAL
+
+        # Timeout: return what we know
+        logger.warning("Order %s poll timeout after %.0fs", order_id, elapsed)
+        return OrderResult(
+            success=True,
+            order_id=order_id,
+            avg_price=expected_price,
+            filled_qty=expected_qty,
+            message="poll_timeout",
+            status="pending",
+        )
+
+    async def cancel_all(self, symbol: Optional[str] = None) -> int:
+        """Cancel all open orders on both spot and futures."""
+        cancelled = 0
+
+        # Cancel spot orders
+        try:
+            spot_orders = await self.client.get_open_orders(symbol)
+            for o in spot_orders:
+                try:
+                    await self.client.cancel_order(o["id"])
+                    cancelled += 1
+                except Exception:
+                    logger.error("Failed to cancel spot order %s", o.get("id"), exc_info=True)
+        except Exception:
+            logger.error("Failed to fetch spot open orders", exc_info=True)
+
+        # Cancel futures orders
+        try:
+            futures_orders = await self.client.get_futures_open_orders(symbol)
+            for o in futures_orders:
+                try:
+                    await self.client.cancel_futures_order(o["id"])
+                    cancelled += 1
+                except Exception:
+                    logger.error("Failed to cancel futures order %s", o.get("id"), exc_info=True)
+        except Exception:
+            logger.error("Failed to fetch futures open orders", exc_info=True)
+
+        logger.info("Cancelled %d orders (spot + futures)", cancelled)
         return cancelled
 
-    async def flatten_position(self, symbol: str, current_size: float, current_price: float, side: str) -> OrderResult:
+    async def flatten_position(
+        self, symbol: str, current_size: float, current_price: float, side: str, market: Optional[MarketInfo] = None
+    ) -> OrderResult:
         """Close a position by placing an opposite market order."""
         close_side = "sell" if side == "long" else "buy"
         notional = abs(current_size * current_price)
+        is_futures = market.market_type == "futures" if market else False
         return await self.execute(
             OrderRequest(
                 symbol=symbol,
@@ -159,5 +279,7 @@ class ExecutionEngine:
                 notional=notional,
                 order_type="market",
                 reason="flatten_position",
-            )
+                reduce_only=is_futures,
+            ),
+            market,
         )

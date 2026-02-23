@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-
-from kucoin_bot.config import RiskConfig
 from kucoin_bot.backtest.engine import BacktestEngine
-from kucoin_bot.strategies.trend import TrendFollowing
 from kucoin_bot.strategies.mean_reversion import MeanReversion
 from kucoin_bot.strategies.risk_off import RiskOff
+from kucoin_bot.strategies.trend import TrendFollowing
 
 
 class TestBacktestEngine:
@@ -69,7 +66,7 @@ class TestBacktestEngine:
         """Fills must happen at bar i+1 open, not bar i close (no look-ahead)."""
         engine = BacktestEngine(
             strategies=[TrendFollowing(), MeanReversion()],
-            min_ev_bps=0,   # disable EV gate so trades can happen
+            min_ev_bps=0,  # disable EV gate so trades can happen
             cooldown_bars=0,
         )
         result = engine.run(sample_klines, "BTC-USDT", initial_equity=10_000, warmup=60)

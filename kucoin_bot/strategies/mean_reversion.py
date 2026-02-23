@@ -37,22 +37,32 @@ class MeanReversion(BaseStrategy):
         if current_position_side and entry_price:
             if current_position_side == "long" and signals.mean_reversion < self.exit_threshold:
                 return StrategyDecision(
-                    action="exit", symbol=signals.symbol, reason="reversion_target_reached",
+                    action="exit",
+                    symbol=signals.symbol,
+                    reason="reversion_target_reached",
                 )
             if current_position_side == "short" and signals.mean_reversion > -self.exit_threshold:
                 return StrategyDecision(
-                    action="exit", symbol=signals.symbol, reason="reversion_target_reached",
+                    action="exit",
+                    symbol=signals.symbol,
+                    reason="reversion_target_reached",
                 )
             # Volatility-adjusted stop loss: wider stops for deeper reversions
             stop_pct = 0.03 * max(1.0, abs(signals.mean_reversion) / self.reversion_threshold)
             pnl_pct = (current_price - entry_price) / entry_price
             if current_position_side == "long" and pnl_pct < -stop_pct:
                 return StrategyDecision(
-                    action="exit", symbol=signals.symbol, order_type="market", reason="stop_loss",
+                    action="exit",
+                    symbol=signals.symbol,
+                    order_type="market",
+                    reason="stop_loss",
                 )
             if current_position_side == "short" and pnl_pct > stop_pct:
                 return StrategyDecision(
-                    action="exit", symbol=signals.symbol, order_type="market", reason="stop_loss",
+                    action="exit",
+                    symbol=signals.symbol,
+                    order_type="market",
+                    reason="stop_loss",
                 )
             return StrategyDecision(action="hold", symbol=signals.symbol, reason="waiting_reversion")
 

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import sys
+
 import pytest
-from unittest.mock import patch
-from kucoin_bot.config import load_config, BotConfig, RiskConfig, parse_bool, Mode, resolve_mode
+
+from kucoin_bot.config import BotConfig, Mode, RiskConfig, load_config, parse_bool, resolve_mode
 
 
 class TestConfig:
@@ -100,6 +100,7 @@ class TestConfig:
         monkeypatch.setattr(sys, "argv", ["kucoin-bot"])
 
         from kucoin_bot.__main__ import main
+
         with pytest.raises(SystemExit) as exc_info:
             main()
         assert exc_info.value.code == 1
@@ -155,6 +156,7 @@ class TestDotenvLoading:
     def test_load_config_calls_load_dotenv(self, monkeypatch):
         """load_config() must call load_dotenv() so .env files are picked up."""
         from unittest.mock import MagicMock
+
         mock_ld = MagicMock()
         monkeypatch.setattr("kucoin_bot.config.load_dotenv", mock_ld)
         load_config()
@@ -170,7 +172,9 @@ class TestDotenvLoading:
         monkeypatch.delenv("LIVE_TRADING", raising=False)
         # Patch load_dotenv to load from our tmp .env file
         from functools import partial
+
         from dotenv import load_dotenv as real_load_dotenv
+
         monkeypatch.setattr(
             "kucoin_bot.config.load_dotenv",
             partial(real_load_dotenv, dotenv_path=str(dotenv_file)),
@@ -219,6 +223,7 @@ class TestModeResolutionIntegration:
         monkeypatch.setattr(sys, "argv", ["kucoin-bot"])
 
         from kucoin_bot.__main__ import main
+
         with pytest.raises(SystemExit) as exc_info:
             main()
         assert exc_info.value.code == 1
@@ -236,6 +241,7 @@ class TestModeResolutionIntegration:
             raise ValueError("simulated unexpected error")
 
         from kucoin_bot import __main__ as main_module
+
         monkeypatch.setattr(main_module, "run_live", _raise_value_error)
 
         with pytest.raises(SystemExit) as exc_info:
@@ -254,6 +260,7 @@ class TestModeResolutionIntegration:
             raise ConnectionError("simulated network failure")
 
         from kucoin_bot import __main__ as main_module
+
         monkeypatch.setattr(main_module, "run_live", _raise_connection_error)
 
         with pytest.raises(SystemExit) as exc_info:
@@ -263,6 +270,7 @@ class TestModeResolutionIntegration:
     def test_help_flag_exits_zero(self, monkeypatch):
         """--help and -h must print usage and exit 0."""
         from kucoin_bot import __main__ as main_module
+
         for flag in ("--help", "-h"):
             monkeypatch.setattr(sys, "argv", ["kucoin-bot", flag])
             with pytest.raises(SystemExit) as exc_info:
@@ -272,9 +280,8 @@ class TestModeResolutionIntegration:
     def test_unknown_cli_args_exit_two(self, monkeypatch):
         """Unknown CLI args must exit with code 2."""
         from kucoin_bot import __main__ as main_module
+
         monkeypatch.setattr(sys, "argv", ["kucoin-bot", "--mode", "live"])
         with pytest.raises(SystemExit) as exc_info:
             main_module.main()
         assert exc_info.value.code == 2
-
-

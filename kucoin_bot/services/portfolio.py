@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from kucoin_bot.api.client import KuCoinClient
-from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
-from kucoin_bot.services.signal_engine import SignalScores, Regime
+from kucoin_bot.services.risk_manager import RiskManager
+from kucoin_bot.services.signal_engine import Regime, SignalScores
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +40,10 @@ class PortfolioManager:
 
     client: KuCoinClient
     risk_mgr: RiskManager
-    allow_transfers: bool = False
+    allow_transfers: bool = True
     allocations: Dict[str, AllocationTarget] = field(default_factory=dict)
     _transfer_log: List[dict] = field(default_factory=list)
+    _db_session_factory: Optional[Any] = None
 
     def compute_allocations(
         self,
@@ -81,9 +82,7 @@ class PortfolioManager:
             weight = score / total_score
             strategy = self._select_strategy(sig)
             lev = self.risk_mgr.compute_leverage(sig, sig.volatility)
-            allocs[sym] = AllocationTarget(
-                symbol=sym, weight=weight, strategy=strategy, max_leverage=lev
-            )
+            allocs[sym] = AllocationTarget(symbol=sym, weight=weight, strategy=strategy, max_leverage=lev)
 
         # Zero-weight the rest
         for sym in universe:
@@ -145,17 +144,42 @@ class PortfolioManager:
                 amount=amount,
                 client_oid=idempotency_key,
             )
-            self._transfer_log.append({
-                "key": idempotency_key,
-                "from": from_account,
-                "to": to_account,
-                "currency": currency,
-                "amount": amount,
-                "result": result,
-            })
+            self._transfer_log.append(
+                {
+                    "key": idempotency_key,
+                    "from": from_account,
+                    "to": to_account,
+                    "currency": currency,
+                    "amount": amount,
+                    "result": result,
+                }
+            )
+            # Persist transfer record to DB if available
+            if self._db_session_factory is not None:
+                try:
+                    from kucoin_bot.models import TransferRecord
+
+                    with self._db_session_factory() as session:
+                        session.add(
+                            TransferRecord(
+                                idempotency_key=idempotency_key,
+                                from_account=from_account,
+                                to_account=to_account,
+                                currency=currency,
+                                amount=amount,
+                                status="success",
+                            )
+                        )
+                        session.commit()
+                except Exception:
+                    logger.warning("Failed to persist transfer record to DB", exc_info=True)
             logger.info(
                 "Transfer %s %s from %s to %s (key=%s)",
-                amount, currency, from_account, to_account, idempotency_key,
+                amount,
+                currency,
+                from_account,
+                to_account,
+                idempotency_key,
             )
             return idempotency_key
         except Exception:

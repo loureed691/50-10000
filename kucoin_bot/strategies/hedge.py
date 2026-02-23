@@ -14,10 +14,7 @@ class HedgeMode(BaseStrategy):
     name = "hedge"
 
     def preconditions_met(self, signals: SignalScores) -> bool:
-        return (
-            signals.regime in (Regime.HIGH_VOLATILITY, Regime.TRENDING_DOWN)
-            and signals.volatility > 0.4
-        )
+        return signals.regime in (Regime.HIGH_VOLATILITY, Regime.TRENDING_DOWN) and signals.volatility > 0.4
 
     def evaluate(
         self,

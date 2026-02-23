@@ -2,39 +2,49 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from kucoin_bot.config import RiskConfig
+import pytest
+
 from kucoin_bot.api.client import KuCoinClient
+from kucoin_bot.config import RiskConfig
 from kucoin_bot.services.execution import ExecutionEngine, OrderRequest
 from kucoin_bot.services.market_data import MarketInfo
-from kucoin_bot.services.risk_manager import RiskManager
 from kucoin_bot.services.portfolio import PortfolioManager
-from kucoin_bot.services.signal_engine import SignalScores, Regime
+from kucoin_bot.services.risk_manager import RiskManager
+from kucoin_bot.services.signal_engine import Regime, SignalScores
 
 
 class TestExecutionEngine:
     def _make_engine(self, circuit_breaker: bool = False) -> ExecutionEngine:
         client = MagicMock(spec=KuCoinClient)
-        client.place_order = AsyncMock(return_value={
-            "code": "200000",
-            "data": {"orderId": "test-order-123"},
-        })
+        client.place_order = AsyncMock(
+            return_value={
+                "code": "200000",
+                "data": {"orderId": "test-order-123"},
+            }
+        )
         client.get_open_orders = AsyncMock(return_value=[])
+        client.get_futures_open_orders = AsyncMock(return_value=[])
         client.cancel_order = AsyncMock(return_value={})
+        client.cancel_futures_order = AsyncMock(return_value={})
         risk_mgr = RiskManager(config=RiskConfig())
         risk_mgr.update_equity(10_000)
         risk_mgr.circuit_breaker_active = circuit_breaker
-        return ExecutionEngine(client=client, risk_mgr=risk_mgr)
+        return ExecutionEngine(client=client, risk_mgr=risk_mgr, poll_fills=False)
 
     @pytest.mark.asyncio
     async def test_execute_order(self):
         engine = self._make_engine()
         market = MarketInfo(
-            symbol="BTC-USDT", base="BTC", quote="USDT",
-            base_min_size=0.0001, base_increment=0.0001,
-            price_increment=0.01, last_price=30000.0, spread_bps=5.0,
+            symbol="BTC-USDT",
+            base="BTC",
+            quote="USDT",
+            base_min_size=0.0001,
+            base_increment=0.0001,
+            price_increment=0.01,
+            last_price=30000.0,
+            spread_bps=5.0,
         )
         result = await engine.execute(
             OrderRequest(symbol="BTC-USDT", side="buy", notional=100, price=30000.0, reason="test"),
@@ -56,8 +66,11 @@ class TestExecutionEngine:
     async def test_spread_too_wide_rejects(self):
         engine = self._make_engine()
         market = MarketInfo(
-            symbol="BTC-USDT", base="BTC", quote="USDT",
-            last_price=30000.0, spread_bps=100.0,  # too wide
+            symbol="BTC-USDT",
+            base="BTC",
+            quote="USDT",
+            last_price=30000.0,
+            spread_bps=100.0,  # too wide
         )
         result = await engine.execute(
             OrderRequest(symbol="BTC-USDT", side="buy", notional=100, price=30000.0),
@@ -72,9 +85,14 @@ class TestExecutionEngine:
         engine = self._make_engine()
         # ZEC-USDT style: base_increment = 0.0001, price ~30
         market = MarketInfo(
-            symbol="ZEC-USDT", base="ZEC", quote="USDT",
-            base_min_size=0.0001, base_increment=0.0001,
-            price_increment=0.01, last_price=30.0, spread_bps=5.0,
+            symbol="ZEC-USDT",
+            base="ZEC",
+            quote="USDT",
+            base_min_size=0.0001,
+            base_increment=0.0001,
+            price_increment=0.01,
+            last_price=30.0,
+            spread_bps=5.0,
         )
         # notional / price = 100 / 30 = 3.3333... -> should truncate to 3.3333
         result = await engine.execute(
@@ -95,9 +113,14 @@ class TestExecutionEngine:
         """Size rounding must truncate (floor) to avoid exceeding available funds."""
         engine = self._make_engine()
         market = MarketInfo(
-            symbol="ZEC-USDT", base="ZEC", quote="USDT",
-            base_min_size=0.01, base_increment=0.01,
-            price_increment=0.01, last_price=40.0, spread_bps=5.0,
+            symbol="ZEC-USDT",
+            base="ZEC",
+            quote="USDT",
+            base_min_size=0.01,
+            base_increment=0.01,
+            price_increment=0.01,
+            last_price=40.0,
+            spread_bps=5.0,
         )
         # notional / price = 100 / 40 = 2.5 -> truncate to 2.50
         result = await engine.execute(
@@ -116,27 +139,34 @@ class TestQuantize:
 
     def test_basic_rounding(self):
         from kucoin_bot.services.execution import _quantize
+
         assert _quantize(1.23456, 0.0001) == 1.2345
 
     def test_no_float_artefacts(self):
         from kucoin_bot.services.execution import _quantize
+
         # This would fail with naive float math: round(1236 * 0.0001) != 0.1236
         result = _quantize(0.12369, 0.0001)
         assert result == 0.1236
         assert str(result) == "0.1236"
 
     def test_round_down(self):
-        from kucoin_bot.services.execution import _quantize
         from decimal import ROUND_DOWN
+
+        from kucoin_bot.services.execution import _quantize
+
         assert _quantize(2.999, 0.01, ROUND_DOWN) == 2.99
 
     def test_round_half_up(self):
-        from kucoin_bot.services.execution import _quantize
         from decimal import ROUND_HALF_UP
+
+        from kucoin_bot.services.execution import _quantize
+
         assert _quantize(2.995, 0.01, ROUND_HALF_UP) == 3.0
 
     def test_whole_number_increment(self):
         from kucoin_bot.services.execution import _quantize
+
         assert _quantize(3.7, 1) == 3.0
 
 
@@ -149,8 +179,12 @@ class TestPortfolioManager:
 
         signals = {
             "BTC-USDT": SignalScores(
-                symbol="BTC-USDT", regime=Regime.TRENDING_UP,
-                confidence=0.7, volatility=0.3, momentum=0.4, trend_strength=0.6,
+                symbol="BTC-USDT",
+                regime=Regime.TRENDING_UP,
+                confidence=0.7,
+                volatility=0.3,
+                momentum=0.4,
+                trend_strength=0.6,
             ),
         }
         allocs = pm.compute_allocations(signals, ["BTC-USDT"])
@@ -176,8 +210,12 @@ class TestPortfolioManager:
 
         signals = {
             "ZEC-USDT": SignalScores(
-                symbol="ZEC-USDT", regime=Regime.HIGH_VOLATILITY,
-                confidence=0.55, volatility=1.0, momentum=1.0, trend_strength=0.68,
+                symbol="ZEC-USDT",
+                regime=Regime.HIGH_VOLATILITY,
+                confidence=0.55,
+                volatility=1.0,
+                momentum=1.0,
+                trend_strength=0.68,
             ),
         }
         allocs = pm.compute_allocations(signals, ["ZEC-USDT"])
@@ -208,8 +246,12 @@ class TestPortfolioManager:
 
         signals = {
             "BTC-USDT": SignalScores(
-                symbol="BTC-USDT", regime=Regime.NEWS_SPIKE,
-                confidence=0.8, volatility=0.9, momentum=0.7, trend_strength=0.6,
+                symbol="BTC-USDT",
+                regime=Regime.NEWS_SPIKE,
+                confidence=0.8,
+                volatility=0.9,
+                momentum=0.7,
+                trend_strength=0.6,
             ),
         }
         allocs = pm.compute_allocations(signals, ["BTC-USDT"])
@@ -224,12 +266,20 @@ class TestPortfolioManager:
 
         signals = {
             "STRONG-USDT": SignalScores(
-                symbol="STRONG-USDT", regime=Regime.TRENDING_UP,
-                confidence=0.6, volatility=0.3, momentum=0.4, trend_strength=0.7,
+                symbol="STRONG-USDT",
+                regime=Regime.TRENDING_UP,
+                confidence=0.6,
+                volatility=0.3,
+                momentum=0.4,
+                trend_strength=0.7,
             ),
             "WEAK-USDT": SignalScores(
-                symbol="WEAK-USDT", regime=Regime.UNKNOWN,
-                confidence=0.6, volatility=0.3, momentum=0.1, trend_strength=0.2,
+                symbol="WEAK-USDT",
+                regime=Regime.UNKNOWN,
+                confidence=0.6,
+                volatility=0.3,
+                momentum=0.1,
+                trend_strength=0.2,
             ),
         }
         allocs = pm.compute_allocations(signals, ["STRONG-USDT", "WEAK-USDT"])
@@ -248,9 +298,7 @@ class TestCooldownLogic:
         cycle = 1
         sym = "BTC-USDT"
         last_cycle = last_entry_cycle.get(sym, -cooldown_cycles)
-        assert cycle - last_cycle >= cooldown_cycles, (
-            "First-ever entry should not be blocked by cooldown"
-        )
+        assert cycle - last_cycle >= cooldown_cycles, "First-ever entry should not be blocked by cooldown"
 
     def test_cooldown_blocks_recent_entry(self):
         """After an entry, the same symbol should be blocked for cooldown_cycles."""
@@ -260,9 +308,7 @@ class TestCooldownLogic:
         cycle = 50
         sym = "BTC-USDT"
         last_cycle = last_entry_cycle.get(sym, -cooldown_cycles)
-        assert cycle - last_cycle < cooldown_cycles, (
-            "Recent entry should be in cooldown"
-        )
+        assert cycle - last_cycle < cooldown_cycles, "Recent entry should be in cooldown"
 
     def test_cooldown_allows_after_expiry(self):
         """After cooldown expires, the symbol should be allowed to enter."""
@@ -272,9 +318,7 @@ class TestCooldownLogic:
         cycle = 311
         sym = "BTC-USDT"
         last_cycle = last_entry_cycle.get(sym, -cooldown_cycles)
-        assert cycle - last_cycle >= cooldown_cycles, (
-            "Entry should be allowed after cooldown expires"
-        )
+        assert cycle - last_cycle >= cooldown_cycles, "Entry should be allowed after cooldown expires"
 
 
 class TestSymbolInclusion:
@@ -291,9 +335,7 @@ class TestSymbolInclusion:
         position_syms = [s for s in positions if s not in universe_syms]
         symbols_to_process = universe_syms + position_syms
 
-        assert "DOGE-USDT" in symbols_to_process, (
-            "DOGE-USDT has an open position and must be processed"
-        )
+        assert "DOGE-USDT" in symbols_to_process, "DOGE-USDT has an open position and must be processed"
         assert "BTC-USDT" in symbols_to_process
         # No duplicates
         assert len(symbols_to_process) == len(set(symbols_to_process))
@@ -350,16 +392,18 @@ class TestPaperMode:
     async def test_paper_mode_does_not_call_place_order(self, monkeypatch):
         """In PAPER mode run_live() must NOT call client.place_order for entries."""
         import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
-        from kucoin_bot.config import BotConfig, RiskConfig
-        from kucoin_bot.api.client import KuCoinClient
-        from kucoin_bot.services.market_data import MarketDataService, MarketInfo
-        from kucoin_bot.services.signal_engine import SignalScores, Regime
+        from unittest.mock import AsyncMock, MagicMock
+
         from kucoin_bot.__main__ import run_live
+        from kucoin_bot.api.client import KuCoinClient
+        from kucoin_bot.config import BotConfig, RiskConfig
+        from kucoin_bot.services.market_data import MarketDataService, MarketInfo
 
         cfg = BotConfig(
             mode="PAPER",
-            api_key="k", api_secret="s", api_passphrase="p",
+            api_key="k",
+            api_secret="s",
+            api_passphrase="p",
             risk=RiskConfig(),
         )
 
@@ -372,16 +416,18 @@ class TestPaperMode:
         mock_client.get_open_orders = AsyncMock(return_value=[])
 
         mock_market = MarketInfo(
-            symbol="BTC-USDT", base="BTC", quote="USDT",
-            last_price=30_000.0, spread_bps=5.0,
-            base_min_size=0.0001, base_increment=0.0001, price_increment=0.01,
+            symbol="BTC-USDT",
+            base="BTC",
+            quote="USDT",
+            last_price=30_000.0,
+            spread_bps=5.0,
+            base_min_size=0.0001,
+            base_increment=0.0001,
+            price_increment=0.01,
         )
 
         # KuCoin kline format: [time, open, close, high, low, volume, quote_volume]
-        mock_klines = [
-            [i, "30000", "30000", "30100", "29900", "100", "3000000"]
-            for i in range(200)
-        ]
+        mock_klines = [[i, "30000", "30000", "30100", "29900", "100", "3000000"] for i in range(200)]
         mock_mds = MagicMock(spec=MarketDataService)
         mock_mds.refresh_universe = AsyncMock()
         mock_mds.get_symbols = MagicMock(return_value=["BTC-USDT"])
@@ -397,10 +443,12 @@ class TestPaperMode:
         async def fake_sleep(_: float) -> None:
             raise asyncio.CancelledError()
 
-        with patch("kucoin_bot.__main__.KuCoinClient", return_value=mock_client), \
-             patch("kucoin_bot.__main__.MarketDataService", return_value=mock_mds), \
-             patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("kucoin_bot.models.init_db", return_value=mock_session_factory):
+        with (
+            patch("kucoin_bot.__main__.KuCoinClient", return_value=mock_client),
+            patch("kucoin_bot.__main__.MarketDataService", return_value=mock_mds),
+            patch("asyncio.sleep", side_effect=fake_sleep),
+            patch("kucoin_bot.models.init_db", return_value=mock_session_factory),
+        ):
             try:
                 await run_live(cfg)
             except asyncio.CancelledError:
@@ -420,9 +468,11 @@ class TestComputeTotalEquity:
         from kucoin_bot.services.market_data import MarketDataService
 
         client = MagicMock(spec=KuCoinClient)
-        client.get_accounts = AsyncMock(return_value=[
-            {"currency": "USDT", "balance": "5000", "available": "5000"},
-        ])
+        client.get_accounts = AsyncMock(
+            return_value=[
+                {"currency": "USDT", "balance": "5000", "available": "5000"},
+            ]
+        )
 
         mds = MagicMock(spec=MarketDataService)
         mds.get_info = MagicMock(return_value=None)
@@ -437,11 +487,13 @@ class TestComputeTotalEquity:
         from kucoin_bot.services.market_data import MarketDataService, MarketInfo
 
         client = MagicMock(spec=KuCoinClient)
-        client.get_accounts = AsyncMock(return_value=[
-            {"currency": "USDT", "balance": "1000", "available": "1000"},
-            {"currency": "BTC", "balance": "0.5", "available": "0.5"},
-            {"currency": "ETH", "balance": "2", "available": "2"},
-        ])
+        client.get_accounts = AsyncMock(
+            return_value=[
+                {"currency": "USDT", "balance": "1000", "available": "1000"},
+                {"currency": "BTC", "balance": "0.5", "available": "0.5"},
+                {"currency": "ETH", "balance": "2", "available": "2"},
+            ]
+        )
 
         btc_info = MarketInfo(symbol="BTC-USDT", base="BTC", quote="USDT", last_price=40_000.0)
         eth_info = MarketInfo(symbol="ETH-USDT", base="ETH", quote="USDT", last_price=2_000.0)
@@ -463,10 +515,12 @@ class TestComputeTotalEquity:
         from kucoin_bot.services.market_data import MarketDataService
 
         client = MagicMock(spec=KuCoinClient)
-        client.get_accounts = AsyncMock(return_value=[
-            {"currency": "USDT", "balance": "2000", "available": "2000"},
-            {"currency": "BTC", "balance": "0", "available": "0"},
-        ])
+        client.get_accounts = AsyncMock(
+            return_value=[
+                {"currency": "USDT", "balance": "2000", "available": "2000"},
+                {"currency": "BTC", "balance": "0", "available": "0"},
+            ]
+        )
 
         mds = MagicMock(spec=MarketDataService)
         mds.get_info = MagicMock(return_value=None)
@@ -481,10 +535,12 @@ class TestComputeTotalEquity:
         from kucoin_bot.services.market_data import MarketDataService
 
         client = MagicMock(spec=KuCoinClient)
-        client.get_accounts = AsyncMock(return_value=[
-            {"currency": "USDT", "balance": "500", "available": "500"},
-            {"currency": "XRP", "balance": "1000", "available": "1000"},
-        ])
+        client.get_accounts = AsyncMock(
+            return_value=[
+                {"currency": "USDT", "balance": "500", "available": "500"},
+                {"currency": "XRP", "balance": "1000", "available": "1000"},
+            ]
+        )
         client.get_ticker = AsyncMock(return_value={"price": "0.5"})
 
         mds = MagicMock(spec=MarketDataService)
@@ -517,12 +573,15 @@ class TestKlineSorting:
         """get_klines must return data sorted oldest-first (ascending ts)."""
         client = MagicMock(spec=KuCoinClient)
         # Simulate KuCoin returning newest-first (descending)
-        raw = [[300, "1", "2", "3", "0.5", "10", "20"],
-               [100, "1", "2", "3", "0.5", "10", "20"],
-               [200, "1", "2", "3", "0.5", "10", "20"]]
+        raw = [
+            [300, "1", "2", "3", "0.5", "10", "20"],
+            [100, "1", "2", "3", "0.5", "10", "20"],
+            [200, "1", "2", "3", "0.5", "10", "20"],
+        ]
         client.get_klines = AsyncMock(return_value=raw)
 
         from kucoin_bot.services.market_data import MarketDataService
+
         service = MarketDataService(client=client)
         result = await service.get_klines("BTC-USDT")
         timestamps = [int(k[0]) for k in result]
@@ -599,12 +658,20 @@ class TestBatchPortfolioAllocation:
 
         signals = {
             "BTC-USDT": SignalScores(
-                symbol="BTC-USDT", regime=Regime.TRENDING_UP,
-                confidence=0.6, volatility=0.3, momentum=0.4, trend_strength=0.6,
+                symbol="BTC-USDT",
+                regime=Regime.TRENDING_UP,
+                confidence=0.6,
+                volatility=0.3,
+                momentum=0.4,
+                trend_strength=0.6,
             ),
             "ETH-USDT": SignalScores(
-                symbol="ETH-USDT", regime=Regime.TRENDING_UP,
-                confidence=0.5, volatility=0.4, momentum=0.3, trend_strength=0.5,
+                symbol="ETH-USDT",
+                regime=Regime.TRENDING_UP,
+                confidence=0.5,
+                volatility=0.4,
+                momentum=0.3,
+                trend_strength=0.5,
             ),
         }
         allocs = pm.compute_allocations(signals, ["BTC-USDT", "ETH-USDT"])
@@ -626,8 +693,12 @@ class TestBatchPortfolioAllocation:
 
         signals = {
             "BTC-USDT": SignalScores(
-                symbol="BTC-USDT", regime=Regime.TRENDING_UP,
-                confidence=0.6, volatility=0.3, momentum=0.4, trend_strength=0.6,
+                symbol="BTC-USDT",
+                regime=Regime.TRENDING_UP,
+                confidence=0.6,
+                volatility=0.3,
+                momentum=0.4,
+                trend_strength=0.6,
             ),
         }
         allocs = pm.compute_allocations(signals, ["BTC-USDT"])
@@ -641,30 +712,35 @@ class TestLeveragePositionSizing:
     async def test_leverage_amplifies_position_size(self):
         """With leverage > 1, position size should be multiplied by leverage."""
         client = MagicMock(spec=KuCoinClient)
-        client.place_order = AsyncMock(return_value={
-            "code": "200000",
-            "data": {"orderId": "lev-order-1"},
-        })
+        client.place_order = AsyncMock(
+            return_value={
+                "code": "200000",
+                "data": {"orderId": "lev-order-1"},
+            }
+        )
         risk_mgr = RiskManager(config=RiskConfig())
         risk_mgr.update_equity(10_000)
-        engine = ExecutionEngine(client=client, risk_mgr=risk_mgr)
+        engine = ExecutionEngine(client=client, risk_mgr=risk_mgr, poll_fills=False)
 
         market = MarketInfo(
-            symbol="BTC-USDT", base="BTC", quote="USDT",
-            base_min_size=0.0001, base_increment=0.0001,
-            price_increment=0.01, last_price=30000.0, spread_bps=5.0,
+            symbol="BTC-USDT",
+            base="BTC",
+            quote="USDT",
+            base_min_size=0.0001,
+            base_increment=0.0001,
+            price_increment=0.01,
+            last_price=30000.0,
+            spread_bps=5.0,
         )
 
         # Execute without leverage (1.0)
         result_1x = await engine.execute(
-            OrderRequest(symbol="BTC-USDT", side="buy", notional=300,
-                         price=30000.0, leverage=1.0, reason="test"),
+            OrderRequest(symbol="BTC-USDT", side="buy", notional=300, price=30000.0, leverage=1.0, reason="test"),
             market,
         )
         # Execute with 3x leverage
         result_3x = await engine.execute(
-            OrderRequest(symbol="BTC-USDT", side="buy", notional=300,
-                         price=30000.0, leverage=3.0, reason="test"),
+            OrderRequest(symbol="BTC-USDT", side="buy", notional=300, price=30000.0, leverage=3.0, reason="test"),
             market,
         )
 
@@ -676,23 +752,29 @@ class TestLeveragePositionSizing:
     async def test_leverage_1x_unchanged(self):
         """With leverage=1.0 (default), position size is notional/price as before."""
         client = MagicMock(spec=KuCoinClient)
-        client.place_order = AsyncMock(return_value={
-            "code": "200000",
-            "data": {"orderId": "lev-order-2"},
-        })
+        client.place_order = AsyncMock(
+            return_value={
+                "code": "200000",
+                "data": {"orderId": "lev-order-2"},
+            }
+        )
         risk_mgr = RiskManager(config=RiskConfig())
         risk_mgr.update_equity(10_000)
-        engine = ExecutionEngine(client=client, risk_mgr=risk_mgr)
+        engine = ExecutionEngine(client=client, risk_mgr=risk_mgr, poll_fills=False)
 
         market = MarketInfo(
-            symbol="ETH-USDT", base="ETH", quote="USDT",
-            base_min_size=0.001, base_increment=0.001,
-            price_increment=0.01, last_price=2000.0, spread_bps=5.0,
+            symbol="ETH-USDT",
+            base="ETH",
+            quote="USDT",
+            base_min_size=0.001,
+            base_increment=0.001,
+            price_increment=0.01,
+            last_price=2000.0,
+            spread_bps=5.0,
         )
 
         result = await engine.execute(
-            OrderRequest(symbol="ETH-USDT", side="buy", notional=200,
-                         price=2000.0, leverage=1.0, reason="test"),
+            OrderRequest(symbol="ETH-USDT", side="buy", notional=200, price=2000.0, leverage=1.0, reason="test"),
             market,
         )
         assert result.success
@@ -701,10 +783,12 @@ class TestLeveragePositionSizing:
 
     def test_compute_position_size_leverage_caps_exposure(self):
         """compute_position_size with leverage should respect total exposure limit."""
-        rm = RiskManager(config=RiskConfig(
-            max_per_position_risk_pct=50.0,  # generous per-position limit
-            max_total_exposure_pct=80.0,
-        ))
+        rm = RiskManager(
+            config=RiskConfig(
+                max_per_position_risk_pct=50.0,  # generous per-position limit
+                max_total_exposure_pct=80.0,
+            )
+        )
         rm.update_equity(10_000)
 
         signals = SignalScores(symbol="BTC-USDT", confidence=0.9, volatility=0.1)
@@ -726,8 +810,12 @@ class TestLeveragePositionSizing:
 
         signals = {
             "BTC-USDT": SignalScores(
-                symbol="BTC-USDT", regime=Regime.TRENDING_UP,
-                confidence=0.9, volatility=0.2, momentum=0.4, trend_strength=0.7,
+                symbol="BTC-USDT",
+                regime=Regime.TRENDING_UP,
+                confidence=0.9,
+                volatility=0.2,
+                momentum=0.4,
+                trend_strength=0.7,
             ),
         }
         allocs = pm.compute_allocations(signals, ["BTC-USDT"])
@@ -741,9 +829,12 @@ class TestTransferForFutures:
     async def test_transfer_called_for_valid_route(self):
         """transfer_if_needed must call inner_transfer for valid routes."""
         client = MagicMock(spec=KuCoinClient)
-        client.inner_transfer = AsyncMock(return_value={
-            "code": "200000", "data": {"orderId": "xfer-1"},
-        })
+        client.inner_transfer = AsyncMock(
+            return_value={
+                "code": "200000",
+                "data": {"orderId": "xfer-1"},
+            }
+        )
         risk_mgr = RiskManager(config=RiskConfig())
         pm = PortfolioManager(client=client, risk_mgr=risk_mgr, allow_transfers=True)
 

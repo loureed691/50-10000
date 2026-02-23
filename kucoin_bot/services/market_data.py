@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 from kucoin_bot.api.client import KuCoinClient
 
@@ -14,6 +13,38 @@ logger = logging.getLogger(__name__)
 
 MAX_SPREAD_BPS = 100  # 1 %
 _KLINE_CACHE_TTL = 60.0  # seconds
+
+# Map kline type strings to their period in seconds for correct time window calculation
+_KLINE_PERIOD_SECONDS: Dict[str, int] = {
+    "1min": 60,
+    "3min": 180,
+    "5min": 300,
+    "15min": 900,
+    "30min": 1800,
+    "1hour": 3600,
+    "2hour": 7200,
+    "4hour": 14400,
+    "6hour": 21600,
+    "8hour": 28800,
+    "12hour": 43200,
+    "1day": 86400,
+    "1week": 604800,
+}
+
+# Map kline type to futures granularity (minutes)
+_FUTURES_GRANULARITY: Dict[str, int] = {
+    "1min": 1,
+    "5min": 5,
+    "15min": 15,
+    "30min": 30,
+    "1hour": 60,
+    "2hour": 120,
+    "4hour": 240,
+    "8hour": 480,
+    "12hour": 720,
+    "1day": 1440,
+    "1week": 10080,
+}
 
 
 @dataclass
@@ -32,6 +63,11 @@ class MarketInfo:
     last_price: float = 0.0
     spread_bps: float = 0.0
     market_type: str = "spot"
+    # Futures-specific fields
+    contract_multiplier: float = 0.0
+    lot_size: int = 0
+    tick_size: float = 0.0
+    max_leverage: float = 1.0
 
 
 @dataclass
@@ -75,17 +111,25 @@ class MarketDataService:
                 sym = contract.get("symbol")
                 if not sym:
                     continue
+                multiplier = float(contract.get("multiplier", 0) or 0)
+                lot_size = int(contract.get("lotSize", 1) or 1)
+                tick_size = float(contract.get("tickSize", 0) or 0)
+                max_lev = float(contract.get("maxLeverage", 1) or 1)
                 eligible[sym] = MarketInfo(
                     symbol=sym,
                     base=contract.get("baseCurrency", ""),
                     quote="USDT",
-                    base_min_size=float(contract.get("lotSize", 0) or 0),
-                    base_increment=float(contract.get("multiplier", 0) or 0),
-                    price_increment=float(contract.get("tickSize", 0) or 0),
+                    base_min_size=float(lot_size),
+                    base_increment=multiplier,
+                    price_increment=tick_size,
                     min_funds=0.0,
                     last_price=float(contract.get("markPrice", contract.get("lastTradePrice", 0)) or 0),
                     spread_bps=0.0,
                     market_type="futures",
+                    contract_multiplier=multiplier,
+                    lot_size=lot_size,
+                    tick_size=tick_size,
+                    max_leverage=max_lev,
                 )
         except Exception:
             logger.warning("Failed to refresh futures universe (spot universe remains available)", exc_info=True)
@@ -106,25 +150,31 @@ class MarketDataService:
 
         # Filter
         self.universe = {
-            sym: info
-            for sym, info in eligible.items()
-            if info.spread_bps <= MAX_SPREAD_BPS and info.last_price > 0
+            sym: info for sym, info in eligible.items() if info.spread_bps <= MAX_SPREAD_BPS and info.last_price > 0
         }
         logger.info("Market universe: %d USDT pairs", len(self.universe))
 
     async def get_klines(self, symbol: str, kline_type: str = "1hour", bars: int = 200) -> List[list]:
-        """Fetch klines with TTL-based caching to reduce API calls."""
+        """Fetch klines with TTL-based caching. Routes to spot or futures endpoint."""
+        info = self.universe.get(symbol)
+        if info and info.market_type == "futures":
+            return await self.get_klines_futures(symbol, kline_type, bars)
+        return await self.get_klines_spot(symbol, kline_type, bars)
+
+    async def get_klines_spot(self, symbol: str, kline_type: str = "1hour", bars: int = 200) -> List[list]:
+        """Fetch spot klines with TTL-based caching."""
         cache_key = f"{symbol}:{kline_type}"
         now = time.time()
 
         cached = self._kline_cache.get(cache_key)
         if cached is not None:
-            data, ts = cached
+            cached_data, ts = cached
             if now - ts < _KLINE_CACHE_TTL:
-                return data
+                return list(cached_data)
 
         now_int = int(now)
-        data = await self.client.get_klines(symbol, kline_type, start=now_int - bars * 3600, end=now_int)
+        period = _KLINE_PERIOD_SECONDS.get(kline_type, 3600)
+        data = await self.client.get_klines(symbol, kline_type, start=now_int - bars * period, end=now_int)
         # KuCoin returns klines in descending time order (newest first).
         # The signal engine expects ascending order (oldest first), so sort
         # by the timestamp field (index 0).
@@ -132,6 +182,36 @@ class MarketDataService:
             data = sorted(data, key=lambda k: int(k[0]))
         self._kline_cache[cache_key] = (data, now)
         return data
+
+    async def get_klines_futures(self, symbol: str, kline_type: str = "1hour", bars: int = 200) -> List[list]:
+        """Fetch futures klines with TTL-based caching."""
+        cache_key = f"{symbol}:{kline_type}:futures"
+        now = time.time()
+
+        cached = self._kline_cache.get(cache_key)
+        if cached is not None:
+            cached_data, ts = cached
+            if now - ts < _KLINE_CACHE_TTL:
+                return list(cached_data)
+
+        now_int = int(now)
+        granularity = _FUTURES_GRANULARITY.get(kline_type, 60)
+        period = _KLINE_PERIOD_SECONDS.get(kline_type, 3600)
+        start_ms = (now_int - bars * period) * 1000
+        end_ms = now_int * 1000
+        raw = await self.client.get_futures_klines(symbol, granularity, start=start_ms, end=end_ms)
+        # Futures klines format: [time_ms, open, high, low, close, volume]
+        # Convert to spot-compatible format: [time_s, open, close, high, low, volume, turnover]
+        result: List[list] = []
+        for k in raw:
+            if len(k) >= 6:
+                ts_s = int(k[0]) // 1000 if int(k[0]) > 1e12 else int(k[0])
+                o, h, l_, c, v = float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])
+                result.append([str(ts_s), str(o), str(c), str(h), str(l_), str(v), str(v * c)])
+        if result and len(result) > 1:
+            result = sorted(result, key=lambda k: int(k[0]))
+        self._kline_cache[cache_key] = (result, now)
+        return result
 
     def get_symbols(self) -> List[str]:
         return list(self.universe.keys())

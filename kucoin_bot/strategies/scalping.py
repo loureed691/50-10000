@@ -18,11 +18,7 @@ class Scalping(BaseStrategy):
         self.take_profit_pct = take_profit_pct
 
     def preconditions_met(self, signals: SignalScores) -> bool:
-        return (
-            signals.regime == Regime.RANGING
-            and signals.volatility < 0.3
-            and signals.confidence >= 0.2
-        )
+        return signals.regime == Regime.RANGING and signals.volatility < 0.3 and signals.confidence >= 0.2
 
     def evaluate(
         self,
@@ -38,11 +34,16 @@ class Scalping(BaseStrategy):
                 pnl_pct = -pnl_pct
             if pnl_pct >= self.take_profit_pct:
                 return StrategyDecision(
-                    action="exit", symbol=signals.symbol, reason="scalp_tp",
+                    action="exit",
+                    symbol=signals.symbol,
+                    reason="scalp_tp",
                 )
             if pnl_pct < -self.take_profit_pct * 2:
                 return StrategyDecision(
-                    action="exit", symbol=signals.symbol, order_type="market", reason="scalp_stop",
+                    action="exit",
+                    symbol=signals.symbol,
+                    order_type="market",
+                    reason="scalp_stop",
                 )
             return StrategyDecision(action="hold", symbol=signals.symbol, reason="in_scalp")
 

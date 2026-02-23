@@ -21,7 +21,15 @@ dependencies = [
 [project.optional-dependencies]
 postgres = ["asyncpg>=0.29,<1", "psycopg2-binary>=2.9,<3"]
 redis = ["redis>=5.0,<6"]
-dev = ["pytest>=8.0,<9", "pytest-asyncio>=0.23,<1", "aioresponses>=0.7,<1", "mypy>=1.8,<2"]
+dev = [
+    "pytest>=8.0,<9",
+    "pytest-asyncio>=0.23,<1",
+    "aioresponses>=0.7,<1",
+    "mypy>=1.8,<2",
+    "black>=24.0",
+    "ruff>=0.4",
+    "isort>=5.0",
+]
 
 [project.scripts]
 kucoin-bot = "kucoin_bot.__main__:main"
@@ -34,3 +42,19 @@ asyncio_mode = "auto"
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
+
+[tool.black]
+line-length = 120
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 120
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

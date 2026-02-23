@@ -65,9 +65,7 @@ class RiskManager:
         """Returns True if total exposure exceeds limit."""
         if self.current_equity <= 0:
             return False
-        total = sum(
-            abs(p.size * p.current_price) for p in self.positions.values()
-        )
+        total = sum(abs(p.size * p.current_price) for p in self.positions.values())
         exposure_pct = total / self.current_equity * 100
         return exposure_pct >= self.config.max_total_exposure_pct
 
@@ -93,11 +91,10 @@ class RiskManager:
         """
         if self.current_equity <= 0:
             return False
-        total = sum(
-            abs(p.size * p.current_price)
-            for sym, p in self.positions.items()
-            if sym in symbols
-        ) + prospective_notional
+        total = (
+            sum(abs(p.size * p.current_price) for sym, p in self.positions.items() if sym in symbols)
+            + prospective_notional
+        )
         exposure_pct = total / self.current_equity * 100
         return exposure_pct >= self.config.max_correlated_exposure_pct
 
@@ -131,18 +128,16 @@ class RiskManager:
 
         # Confidence adjustment: exponential scaling rewards high-confidence trades
         # and penalises low-confidence ones more aggressively than linear scaling.
-        conf_factor = max(0.1, signals.confidence ** 1.5)
+        conf_factor = max(0.1, signals.confidence**1.5)
 
         notional = max_risk_usd * vol_factor * conf_factor
 
         # Ensure doesn't blow total exposure
-        existing_exposure = sum(
-            abs(p.size * p.current_price) for p in self.positions.values()
-        )
+        existing_exposure = sum(abs(p.size * p.current_price) for p in self.positions.values())
         max_total = self.current_equity * (self.config.max_total_exposure_pct / 100)
         remaining = max(0, max_total - existing_exposure)
         # remaining is in exposure units; convert to margin by dividing by leverage
-        notional = min(notional, remaining / max(leverage, 1.0))
+        notional = float(min(notional, remaining / max(leverage, 1.0)))
 
         # Skip if notional too small for one unit at current price
         if notional < price * _MIN_NOTIONAL_FACTOR:
@@ -208,12 +203,11 @@ class RiskManager:
         """
         # Import here to avoid circular imports; SideSelector does not import RiskManager.
         from kucoin_bot.services.side_selector import SideSelector
+
         return SideSelector()._squeeze_risk_high(signals)
 
     def get_risk_summary(self) -> dict:
-        total_exposure = sum(
-            abs(p.size * p.current_price) for p in self.positions.values()
-        )
+        total_exposure = sum(abs(p.size * p.current_price) for p in self.positions.values())
         dd = 0.0
         if self.peak_equity > 0:
             dd = (self.peak_equity - self.current_equity) / self.peak_equity * 100

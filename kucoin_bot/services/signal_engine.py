@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
@@ -32,15 +31,15 @@ class SignalScores:
     """Normalized signal scores for one symbol."""
 
     symbol: str
-    momentum: float = 0.0       # -1 to 1
+    momentum: float = 0.0  # -1 to 1
     trend_strength: float = 0.0  # 0 to 1
     mean_reversion: float = 0.0  # -1 to 1 (positive = oversold bounce expected)
-    volatility: float = 0.0      # normalized 0-1
+    volatility: float = 0.0  # normalized 0-1
     volume_anomaly: float = 0.0  # z-score
     orderbook_imbalance: float = 0.0  # -1 to 1
     funding_rate: float = 0.0
     regime: Regime = Regime.UNKNOWN
-    confidence: float = 0.0      # 0 to 1
+    confidence: float = 0.0  # 0 to 1
 
     def to_dict(self) -> dict:
         return {
@@ -78,10 +77,10 @@ class SignalEngine:
         if len(klines) < self.lookback:
             return SignalScores(symbol=symbol)
 
-        closes = np.array([float(k[2]) for k in klines[-self.lookback:]], dtype=np.float64)
-        highs = np.array([float(k[3]) for k in klines[-self.lookback:]], dtype=np.float64)
-        lows = np.array([float(k[4]) for k in klines[-self.lookback:]], dtype=np.float64)
-        volumes = np.array([float(k[5]) for k in klines[-self.lookback:]], dtype=np.float64)
+        closes = np.array([float(k[2]) for k in klines[-self.lookback :]], dtype=np.float64)
+        highs = np.array([float(k[3]) for k in klines[-self.lookback :]], dtype=np.float64)
+        lows = np.array([float(k[4]) for k in klines[-self.lookback :]], dtype=np.float64)
+        volumes = np.array([float(k[5]) for k in klines[-self.lookback :]], dtype=np.float64)
 
         scores = SignalScores(symbol=symbol)
 
@@ -95,9 +94,7 @@ class SignalEngine:
             if len(volumes) > 20 and np.std(volumes[:-1]) > 0:
                 vol_std = float(np.std(volumes[:-5]))
                 if vol_std > 0:
-                    recent_vol_z = float(
-                        (np.mean(volumes[-5:]) - np.mean(volumes[:-5])) / vol_std
-                    )
+                    recent_vol_z = float((np.mean(volumes[-5:]) - np.mean(volumes[:-5])) / vol_std)
                     vol_weight = float(np.clip(0.5 + recent_vol_z * 0.25, 0.5, 1.5))
             scores.momentum = float(np.clip(raw_momentum * vol_weight, -1, 1))
 
@@ -112,9 +109,7 @@ class SignalEngine:
 
         # --- Volume anomaly (z-score of recent volume) ---
         if len(volumes) > 20 and np.std(volumes[:-1]) > 0:
-            scores.volume_anomaly = float(
-                (volumes[-1] - np.mean(volumes[:-1])) / np.std(volumes[:-1])
-            )
+            scores.volume_anomaly = float((volumes[-1] - np.mean(volumes[:-1])) / np.std(volumes[:-1]))
 
         # --- Orderbook imbalance ---
         scores.orderbook_imbalance = self._orderbook_imbalance(orderbook)

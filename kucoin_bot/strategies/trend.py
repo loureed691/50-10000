@@ -74,13 +74,19 @@ class TrendFollowing(BaseStrategy):
             trail_stop = max(entry_price, current_price) * (1 - trail)
             if current_price < trail_stop:
                 return StrategyDecision(
-                    action="exit", symbol=signals.symbol, order_type="market", reason="trailing_stop",
+                    action="exit",
+                    symbol=signals.symbol,
+                    order_type="market",
+                    reason="trailing_stop",
                 )
         elif current_position_side == "short" and entry_price:
             trail_stop = min(entry_price, current_price) * (1 + trail)
             if current_price > trail_stop:
                 return StrategyDecision(
-                    action="exit", symbol=signals.symbol, order_type="market", reason="trailing_stop",
+                    action="exit",
+                    symbol=signals.symbol,
+                    order_type="market",
+                    reason="trailing_stop",
                 )
 
         return StrategyDecision(action="hold", symbol=signals.symbol, reason="in_trend")
