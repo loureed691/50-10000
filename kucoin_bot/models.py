@@ -116,6 +116,22 @@ class PnLRecord(Base):
     timestamp = Column(DateTime, default=dt.datetime.utcnow)
 
 
+class PositionRecord(Base):
+    """Persisted open position for cross-session recovery."""
+
+    __tablename__ = "positions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(32), nullable=False, unique=True, index=True)
+    side = Column(String(8), nullable=False)  # long / short
+    size = Column(Float, nullable=False)
+    entry_price = Column(Float, nullable=False)
+    current_price = Column(Float, default=0.0)
+    leverage = Column(Float, default=1.0)
+    account_type = Column(String(16), default="trade")
+    updated_at = Column(DateTime, default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow)
+
+
 def init_db(db_url: str = "sqlite:///kucoin_bot.db") -> sessionmaker:
     """Create tables and return a session factory."""
     engine = create_engine(db_url, echo=False)
