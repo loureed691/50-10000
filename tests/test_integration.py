@@ -116,7 +116,6 @@ class TestQuantize:
 
     def test_basic_rounding(self):
         from kucoin_bot.services.execution import _quantize
-        from decimal import ROUND_DOWN
         assert _quantize(1.23456, 0.0001) == 1.2345
 
     def test_no_float_artefacts(self):
