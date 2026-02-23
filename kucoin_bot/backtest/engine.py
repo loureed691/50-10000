@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Realistic KuCoin fee tiers
 DEFAULT_MAKER_FEE = 0.001  # 0.1%
 DEFAULT_TAKER_FEE = 0.001
-DEFAULT_SLIPPAGE_BPS = 5  # 0.05%
+DEFAULT_SLIPPAGE_BPS = 2  # 0.02%
 DEFAULT_FILL_RATE = 0.95  # 95% fill probability for limit orders
 
 # Latency slippage scaling: each extra second of latency adds this fraction of

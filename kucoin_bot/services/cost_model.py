@@ -54,7 +54,7 @@ class CostModel:
 
         trade_allowed = expected_edge_bps > total_cost_bps + safety_buffer_bps
 
-    The ``safety_buffer_bps`` (default 10.0) is equivalent to ``min_ev_bps`` in
+    The ``safety_buffer_bps`` (default 5.0) is equivalent to ``min_ev_bps`` in
     :class:`~kucoin_bot.config.RiskConfig`, so default behaviour is identical to
     the previous inline gate.
     """
