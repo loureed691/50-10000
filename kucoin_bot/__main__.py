@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import logging
@@ -476,17 +475,28 @@ def run_backtest(cfg: BotConfig) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="KuCoin Trading Bot")
-    parser.add_argument(
-        "--mode",
-        choices=["live", "paper", "shadow", "backtest"],
-        metavar="MODE",
-        help="Operating mode: live, paper, shadow, or backtest. "
-             "Overrides BOT_MODE/MODE env vars and config.yaml.",
-    )
-    args = parser.parse_args()
-
-    cfg = load_config(cli_mode=args.mode)
+    # Reject unknown CLI args; print a hint for --help/-h.
+    argv = sys.argv[1:]
+    if argv:
+        if len(argv) == 1 and argv[0] in ("-h", "--help"):
+            print(
+                "KuCoin Trading Bot\n"
+                "\n"
+                "Usage:\n"
+                "  python -m kucoin_bot\n"
+                "\n"
+                "This bot is configured entirely via environment variables.\n"
+                "Copy .env.example to .env and set your values before starting.\n"
+                "Key variables: BOT_MODE, LIVE_TRADING, KUCOIN_API_KEY, KUCOIN_API_SECRET, KUCOIN_API_PASSPHRASE"
+            )
+            sys.exit(0)
+        else:
+            print(
+                f"ERROR: Unknown command-line arguments: {' '.join(argv)}\n"
+                "This bot does not accept CLI options; configure it via environment variables."
+            )
+            sys.exit(2)
+    cfg = load_config()
 
     if cfg.mode.upper() == "BACKTEST":
         run_backtest(cfg)

@@ -43,41 +43,51 @@ class TestConfig:
         assert rc.min_ev_bps == 10.0
         assert rc.cooldown_bars == 5
 
-    def test_env_override(self, monkeypatch, tmp_path):
+    def test_blank_numeric_env_uses_default(self, monkeypatch):
+        """Blank numeric env vars (e.g. MAX_LEVERAGE=) must fall back to defaults."""
+        monkeypatch.setenv("MAX_LEVERAGE", "")
+        monkeypatch.setenv("COOLDOWN_BARS", "")
+        monkeypatch.setenv("FUNDING_RATE_PER_8H", "")
+        cfg = load_config()
+        assert cfg.risk.max_leverage == 3.0
+        assert cfg.risk.cooldown_bars == 5
+        assert cfg.short.funding_rate_per_8h == 0.0001
+
+    def test_invalid_numeric_env_uses_default(self, monkeypatch):
+        """Invalid numeric env vars must fall back to defaults with a warning."""
+        monkeypatch.setenv("MAX_LEVERAGE", "not-a-number")
+        cfg = load_config()
+        assert cfg.risk.max_leverage == 3.0
+
+    def test_env_override(self, monkeypatch):
         monkeypatch.setenv("MAX_LEVERAGE", "5.0")
         monkeypatch.setenv("BOT_MODE", "LIVE")
-        # Prevent YAML overlay from interfering
-        monkeypatch.chdir(tmp_path)
         cfg = load_config()
         assert cfg.risk.max_leverage == 5.0
         assert cfg.mode == "LIVE"
 
-    def test_live_trading_flag_loaded_from_env(self, monkeypatch, tmp_path):
+    def test_live_trading_flag_loaded_from_env(self, monkeypatch):
         monkeypatch.setenv("LIVE_TRADING", "true")
         monkeypatch.setenv("BOT_MODE", "LIVE")
-        monkeypatch.chdir(tmp_path)
         cfg = load_config()
         assert cfg.live_trading is True
 
-    def test_live_trading_defaults_false(self, monkeypatch, tmp_path):
+    def test_live_trading_defaults_false(self, monkeypatch):
         monkeypatch.delenv("LIVE_TRADING", raising=False)
-        monkeypatch.chdir(tmp_path)
         cfg = load_config()
         assert cfg.live_trading is False
 
-    def test_ev_bps_and_cooldown_from_env(self, monkeypatch, tmp_path):
+    def test_ev_bps_and_cooldown_from_env(self, monkeypatch):
         monkeypatch.setenv("MIN_EV_BPS", "25.0")
         monkeypatch.setenv("COOLDOWN_BARS", "10")
-        monkeypatch.chdir(tmp_path)
         cfg = load_config()
         assert cfg.risk.min_ev_bps == 25.0
         assert cfg.risk.cooldown_bars == 10
 
-    def test_live_mode_refused_without_live_trading(self, monkeypatch, tmp_path):
+    def test_live_mode_refused_without_live_trading(self, monkeypatch):
         """main() must exit(1) when BOT_MODE=LIVE but LIVE_TRADING!=true."""
         monkeypatch.setenv("BOT_MODE", "LIVE")
         monkeypatch.delenv("LIVE_TRADING", raising=False)
-        monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["kucoin-bot"])
 
         from kucoin_bot.__main__ import main
@@ -105,67 +115,42 @@ class TestParseBool:
 
 
 class TestResolveMode:
-    def test_cli_overrides_all(self):
-        mode, src = resolve_mode("live", {"BOT_MODE": "BACKTEST"}, "BACKTEST")
-        assert mode == Mode.LIVE
-        assert "CLI" in src
-
-    def test_env_mode_overrides_yaml(self):
-        mode, src = resolve_mode(None, {"MODE": "PAPER"}, "BACKTEST")
+    def test_env_mode_overrides_bot_mode(self):
+        mode, src = resolve_mode({"MODE": "PAPER", "BOT_MODE": "LIVE"})
         assert mode == Mode.PAPER
         assert "env MODE" in src
 
-    def test_env_bot_mode_overrides_yaml(self):
-        mode, src = resolve_mode(None, {"BOT_MODE": "LIVE"}, "BACKTEST")
+    def test_env_bot_mode(self):
+        mode, src = resolve_mode({"BOT_MODE": "LIVE"})
         assert mode == Mode.LIVE
         assert "env BOT_MODE" in src
 
     def test_mode_env_takes_precedence_over_bot_mode(self):
         """MODE env var shadows BOT_MODE when both are set."""
-        mode, src = resolve_mode(None, {"MODE": "PAPER", "BOT_MODE": "LIVE"}, None)
+        mode, src = resolve_mode({"MODE": "PAPER", "BOT_MODE": "LIVE"})
         assert mode == Mode.PAPER
 
-    def test_yaml_used_when_no_env(self):
-        mode, src = resolve_mode(None, {}, "SHADOW")
-        assert mode == Mode.SHADOW
-        assert "config.yaml" in src
-
     def test_default_is_backtest(self):
-        mode, src = resolve_mode(None, {}, None)
+        mode, src = resolve_mode({})
         assert mode == Mode.BACKTEST
         assert "default" in src
 
     def test_invalid_mode_raises(self):
         with pytest.raises(ValueError):
-            resolve_mode("bogus", {}, None)
+            resolve_mode({"BOT_MODE": "bogus"})
 
 
 class TestModeResolutionIntegration:
     """Integration tests for mode resolution via load_config()."""
 
-    def test_env_bot_mode_live_overrides_yaml_backtest(self, monkeypatch, tmp_path):
-        """BOT_MODE=LIVE env var must NOT be overridden by config.yaml mode=BACKTEST."""
-        import yaml
-        (tmp_path / "config.yaml").write_text(yaml.dump({"mode": "BACKTEST"}))
-        monkeypatch.chdir(tmp_path)
+    def test_env_bot_mode_live(self, monkeypatch):
+        """BOT_MODE=LIVE env var sets mode to LIVE."""
         monkeypatch.setenv("BOT_MODE", "LIVE")
-
         cfg = load_config()
         assert cfg.mode == "LIVE"
 
-    def test_cli_mode_overrides_env_and_yaml(self, monkeypatch, tmp_path):
-        """CLI --mode live must win over both env BOT_MODE and config.yaml."""
-        import yaml
-        (tmp_path / "config.yaml").write_text(yaml.dump({"mode": "BACKTEST"}))
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("BOT_MODE", "BACKTEST")
-
-        cfg = load_config(cli_mode="live")
-        assert cfg.mode == "LIVE"
-
-    def test_live_trading_true_string(self, monkeypatch, tmp_path):
+    def test_live_trading_true_string(self, monkeypatch):
         """LIVE_TRADING=1 and =yes must be accepted as truthy."""
-        monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("LIVE_TRADING", "1")
         cfg = load_config()
         assert cfg.live_trading is True
@@ -174,9 +159,8 @@ class TestModeResolutionIntegration:
         cfg = load_config()
         assert cfg.live_trading is True
 
-    def test_live_trading_false_string(self, monkeypatch, tmp_path):
+    def test_live_trading_false_string(self, monkeypatch):
         """LIVE_TRADING=0 and =no must be accepted as falsy."""
-        monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("LIVE_TRADING", "0")
         cfg = load_config()
         assert cfg.live_trading is False
@@ -185,9 +169,8 @@ class TestModeResolutionIntegration:
         cfg = load_config()
         assert cfg.live_trading is False
 
-    def test_live_mode_missing_api_keys_exits_nonzero(self, monkeypatch, tmp_path):
+    def test_live_mode_missing_api_keys_exits_nonzero(self, monkeypatch):
         """LIVE mode with LIVE_TRADING=true but no API keys → RuntimeError → exit(1)."""
-        monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("BOT_MODE", "LIVE")
         monkeypatch.setenv("LIVE_TRADING", "true")
         monkeypatch.delenv("KUCOIN_API_KEY", raising=False)
@@ -200,9 +183,8 @@ class TestModeResolutionIntegration:
             main()
         assert exc_info.value.code == 1
 
-    def test_live_mode_unexpected_exception_exits_nonzero(self, monkeypatch, tmp_path):
+    def test_live_mode_unexpected_exception_exits_nonzero(self, monkeypatch):
         """LIVE mode with LIVE_TRADING=true but non-RuntimeError exception → exit(1)."""
-        monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("BOT_MODE", "LIVE")
         monkeypatch.setenv("LIVE_TRADING", "true")
         monkeypatch.setenv("KUCOIN_API_KEY", "key")
@@ -220,9 +202,8 @@ class TestModeResolutionIntegration:
             main_module.main()
         assert exc_info.value.code == 1
 
-    def test_paper_mode_unexpected_exception_exits_nonzero(self, monkeypatch, tmp_path):
+    def test_paper_mode_unexpected_exception_exits_nonzero(self, monkeypatch):
         """PAPER mode non-RuntimeError exception → exit(1) (no raw traceback)."""
-        monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("BOT_MODE", "PAPER")
         monkeypatch.setenv("KUCOIN_API_KEY", "key")
         monkeypatch.setenv("KUCOIN_API_SECRET", "secret")
@@ -238,4 +219,22 @@ class TestModeResolutionIntegration:
         with pytest.raises(SystemExit) as exc_info:
             main_module.main()
         assert exc_info.value.code == 1
+
+    def test_help_flag_exits_zero(self, monkeypatch):
+        """--help and -h must print usage and exit 0."""
+        from kucoin_bot import __main__ as main_module
+        for flag in ("--help", "-h"):
+            monkeypatch.setattr(sys, "argv", ["kucoin-bot", flag])
+            with pytest.raises(SystemExit) as exc_info:
+                main_module.main()
+            assert exc_info.value.code == 0
+
+    def test_unknown_cli_args_exit_two(self, monkeypatch):
+        """Unknown CLI args must exit with code 2."""
+        from kucoin_bot import __main__ as main_module
+        monkeypatch.setattr(sys, "argv", ["kucoin-bot", "--mode", "live"])
+        with pytest.raises(SystemExit) as exc_info:
+            main_module.main()
+        assert exc_info.value.code == 2
+
 
