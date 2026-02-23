@@ -13,7 +13,7 @@ import time
 from kucoin_bot.config import load_config, BotConfig
 from kucoin_bot.api.client import KuCoinClient
 from kucoin_bot.services.market_data import MarketDataService
-from kucoin_bot.services.signal_engine import SignalEngine
+from kucoin_bot.services.signal_engine import SignalEngine, SignalScores
 from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
 from kucoin_bot.services.portfolio import PortfolioManager, AllocationTarget
 from kucoin_bot.services.execution import ExecutionEngine, OrderRequest, OrderResult
@@ -189,8 +189,8 @@ async def run_live(cfg: BotConfig) -> None:
     last_reset_day: str = time.strftime("%Y-%m-%d", time.gmtime())
 
     logger.info(
-        "Starting %s loop with %d strategies | EV gate: %.0f bps | cooldown: %d bars",
-        mode_label, len(strategies), cfg.risk.min_ev_bps, cooldown_cycles,
+        "Starting %s loop with %d strategies | EV gate: %.0f bps | cooldown: %d bars (%d cycles)",
+        mode_label, len(strategies), cfg.risk.min_ev_bps, cfg.risk.cooldown_bars, cooldown_cycles,
     )
     cycle = 0
 
@@ -228,9 +228,17 @@ async def run_live(cfg: BotConfig) -> None:
             # Refresh universe and full portfolio equity periodically
             if cycle % 60 == 1:
                 await market_data.refresh_universe()
-                total_equity = await _compute_total_equity(client, market_data)
-                if total_equity > 0:
-                    risk_mgr.update_equity(total_equity)
+                # Only refresh equity from the API in live mode.
+                # In paper/shadow mode the equity is tracked internally;
+                # overwriting it would lose simulated P&L.
+                if not is_paper and not is_shadow:
+                    total_equity = await _compute_total_equity(client, market_data)
+                    if total_equity > 0:
+                        risk_mgr.update_equity(total_equity)
+
+            # Evaluate circuit breaker each cycle (matches backtest behaviour)
+            if risk_mgr.check_circuit_breaker():
+                logger.critical("Circuit breaker active – skipping entries this cycle")
 
             # Process each pair
             # Build the symbol list: universe symbols (optionally capped) plus
@@ -241,13 +249,31 @@ async def run_live(cfg: BotConfig) -> None:
                 universe_syms = universe_syms[:cfg.max_symbols]
             position_syms = [s for s in risk_mgr.positions if s not in universe_syms]
             symbols_to_process = universe_syms + position_syms
+
+            # Collect signals for all symbols first so portfolio allocation
+            # can normalise weights across the whole universe.
+            all_signals: dict[str, SignalScores] = {}
+            all_klines: dict[str, list] = {}
             for sym in symbols_to_process:
                 try:
                     klines = await market_data.get_klines(sym)
                     if len(klines) < signal_engine.lookback:
                         continue
+                    all_klines[sym] = klines
+                    all_signals[sym] = signal_engine.compute(sym, klines)
+                except Exception:
+                    logger.error("Error fetching signals for %s", sym, exc_info=True)
 
-                    signals = signal_engine.compute(sym, klines)
+            # Compute portfolio allocations across all symbols at once
+            batch_allocs = portfolio_mgr.compute_allocations(
+                all_signals, list(all_signals.keys())
+            )
+
+            for sym in symbols_to_process:
+                if sym not in all_signals:
+                    continue
+                try:
+                    signals = all_signals[sym]
                     market = market_data.get_info(sym)
 
                     if cfg.live_diagnostic:
@@ -260,11 +286,8 @@ async def run_live(cfg: BotConfig) -> None:
                     if pos and market and market.last_price > 0:
                         pos.current_price = market.last_price
 
-                    # Portfolio allocation
-                    allocs = portfolio_mgr.compute_allocations(
-                        {sym: signals}, [sym]
-                    )
-                    alloc = allocs.get(sym)
+                    # Portfolio allocation (from batch computation)
+                    alloc = batch_allocs.get(sym)
                     if not alloc or alloc.weight <= 0:
                         if not pos:
                             continue
@@ -466,14 +489,16 @@ async def run_live(cfg: BotConfig) -> None:
                                 slip_dir = 1 if side == "buy" else -1
                                 fill_px = last_px * (1 + slip_dir * DEFAULT_SLIPPAGE_BPS / 10_000) if last_px > 0 else pos.entry_price
                                 paper_fee = pos.size * fill_px * DEFAULT_TAKER_FEE
-                                pnl = (fill_px - pos.entry_price) * pos.size - paper_fee
+                                raw_pnl = (fill_px - pos.entry_price) * pos.size
                                 if pos.side == "short":
-                                    pnl = -((fill_px - pos.entry_price) * pos.size) - paper_fee
+                                    raw_pnl = -(raw_pnl)
+                                pnl = raw_pnl - paper_fee
                                 risk_mgr.record_pnl(pnl)
+                                risk_mgr.update_equity(risk_mgr.current_equity + pnl)
                                 risk_mgr.update_position(sym, PositionInfo(
                                     symbol=sym, side=pos.side, size=0,
                                 ))
-                                strategy_monitor.record_trade(alloc.strategy, pnl, paper_fee)
+                                strategy_monitor.record_trade(alloc.strategy, raw_pnl, paper_fee)
                                 logger.info("[PAPER] Simulated exit %s pnl=%.4f fee=%.4f", sym, pnl, paper_fee)
                             else:
                                 result = await exec_engine.execute(
