@@ -529,7 +529,7 @@ class TestPaperModePnL:
         # net_expectancy = raw_pnl - fee = 100 - 10 = 90
         assert stats["trend_following"]["net_expectancy"] == pytest.approx(90.0)
 
-    def test_paper_exit_pnl_double_count_before_fix(self):
+    def test_paper_exit_pnl_with_fee_included_causes_double_counting(self):
         """Demonstrate that passing fee-included PnL + fee causes double-counting."""
         from kucoin_bot.services.strategy_monitor import StrategyMonitor
 
