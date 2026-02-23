@@ -10,10 +10,10 @@ from typing import Dict, List, Optional, Tuple, Type
 import numpy as np
 
 from kucoin_bot.config import RiskConfig
-from kucoin_bot.services.signal_engine import SignalEngine, SignalScores
-from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
 from kucoin_bot.services.cost_model import CostModel, TradeCosts
+from kucoin_bot.services.risk_manager import PositionInfo, RiskManager
 from kucoin_bot.services.side_selector import SideSelector
+from kucoin_bot.services.signal_engine import SignalEngine, SignalScores
 from kucoin_bot.strategies.base import BaseStrategy, StrategyDecision
 
 logger = logging.getLogger(__name__)
@@ -40,9 +40,9 @@ class BacktestTrade:
     quantity: float
     fee: float
     pnl: float = 0.0
-    funding_cost: float = 0.0   # cumulative futures funding cost for this position
-    borrow_cost: float = 0.0    # cumulative margin borrow cost for this position
-    position_side: str = ""     # "long" or "short" for exit records
+    funding_cost: float = 0.0  # cumulative futures funding cost for this position
+    borrow_cost: float = 0.0  # cumulative margin borrow cost for this position
+    position_side: str = ""  # "long" or "short" for exit records
 
 
 @dataclass
@@ -57,20 +57,22 @@ class BacktestResult:
     win_rate: float
     total_trades: int
     total_fees: float
-    expectancy: float = 0.0   # avg PnL per closed round-trip trade
-    turnover: float = 0.0     # total notional traded / initial equity
+    expectancy: float = 0.0  # avg PnL per closed round-trip trade
+    turnover: float = 0.0  # total notional traded / initial equity
     # Per-side breakdown
     long_pnl: float = 0.0
     short_pnl: float = 0.0
     long_trades: int = 0
     short_trades: int = 0
     # Cost breakdown
-    cost_breakdown: Dict[str, float] = field(default_factory=lambda: {
-        "fees": 0.0,
-        "slippage": 0.0,
-        "funding": 0.0,
-        "borrow": 0.0,
-    })
+    cost_breakdown: Dict[str, float] = field(
+        default_factory=lambda: {
+            "fees": 0.0,
+            "slippage": 0.0,
+            "funding": 0.0,
+            "borrow": 0.0,
+        }
+    )
     trades: List[BacktestTrade] = field(default_factory=list)
     equity_curve: List[float] = field(default_factory=list)
 
@@ -191,7 +193,9 @@ class BacktestEngine:
         _pending_exit: bool = False
 
         # Effective slippage for fills, including latency impact.
-        effective_slippage_bps = self.slippage_bps + (self.latency_ms / 1000.0) * self.slippage_bps * LATENCY_DRIFT_FACTOR
+        effective_slippage_bps = (
+            self.slippage_bps + (self.latency_ms / 1000.0) * self.slippage_bps * LATENCY_DRIFT_FACTOR
+        )
 
         for i in range(warmup, len(klines)):
             bar = klines[i]
@@ -208,16 +212,12 @@ class BacktestEngine:
                 fill_price = open_price + slip
                 slip_cost = abs(open_price * (effective_slippage_bps / 10_000))
 
-                notional = risk_mgr.compute_position_size(
-                    symbol, fill_price, pend_signals.volatility, pend_signals
-                )
+                notional = risk_mgr.compute_position_size(symbol, fill_price, pend_signals.volatility, pend_signals)
                 if notional > 0:
                     size = notional / fill_price
                     if pend_decision.order_type == "limit" and rng.random() > self.fill_rate:
                         size *= rng.uniform(0.3, 0.9)
-                    fee_rate = (
-                        self.taker_fee if pend_decision.order_type == "market" else self.maker_fee
-                    )
+                    fee_rate = self.taker_fee if pend_decision.order_type == "market" else self.maker_fee
                     fee = size * fill_price * fee_rate
                     total_fees += fee
                     total_slippage_cost += slip_cost * size
@@ -228,9 +228,7 @@ class BacktestEngine:
                     position_size = size
                     holding_bars = 0
                     last_entry_bar = i
-                    trades.append(
-                        BacktestTrade(ts, symbol, pend_decision.action, fill_price, size, fee)
-                    )
+                    trades.append(BacktestTrade(ts, symbol, pend_decision.action, fill_price, size, fee))
 
             if _pending_exit and position_side:
                 _pending_exit = False
@@ -249,7 +247,13 @@ class BacktestEngine:
 
                 trades.append(
                     BacktestTrade(
-                        ts, symbol, "exit", fill_price, position_size, fee, pnl,
+                        ts,
+                        symbol,
+                        "exit",
+                        fill_price,
+                        position_size,
+                        fee,
+                        pnl,
                         position_side=position_side,
                     )
                 )
@@ -313,7 +317,9 @@ class BacktestEngine:
                 if side_dec.side == "flat":
                     logger.debug(
                         "Side selector blocked %s %s: %s",
-                        symbol, proposed, side_dec.reason,
+                        symbol,
+                        proposed,
+                        side_dec.reason,
                     )
                     equity_curve.append(equity)
                     continue
@@ -335,7 +341,10 @@ class BacktestEngine:
                 if not cost_model.ev_gate(expected_bps, costs):
                     logger.debug(
                         "EV gate blocked %s entry: expected %.1f bps < cost %.1f bps + buffer %.1f",
-                        symbol, expected_bps, costs.total_bps, cost_model.safety_buffer_bps,
+                        symbol,
+                        expected_bps,
+                        costs.total_bps,
+                        cost_model.safety_buffer_bps,
                     )
                     equity_curve.append(equity)
                     continue
@@ -365,15 +374,27 @@ class BacktestEngine:
             total_fees += fee
             trades.append(
                 BacktestTrade(
-                    int(klines[-1][0]), symbol, "exit", close, position_size, fee, pnl,
+                    int(klines[-1][0]),
+                    symbol,
+                    "exit",
+                    close,
+                    position_size,
+                    fee,
+                    pnl,
                     position_side=position_side,
                 )
             )
             equity += pnl
 
         return self._compute_result(
-            initial_equity, equity, equity_curve, trades, total_fees,
-            total_funding_cost, total_borrow_cost, total_slippage_cost,
+            initial_equity,
+            equity,
+            equity_curve,
+            trades,
+            total_fees,
+            total_funding_cost,
+            total_borrow_cost,
+            total_slippage_cost,
         )
 
     def walk_forward(
@@ -407,9 +428,7 @@ class BacktestEngine:
             if len(test_klines) > min_required:
                 # warmup=0: this slice is already OOS; no need to discard bars
                 # for indicator warm-up within the slice itself.
-                result = self.run(
-                    test_klines, symbol, initial_equity=initial_equity, warmup=0
-                )
+                result = self.run(test_klines, symbol, initial_equity=initial_equity, warmup=0)
                 results.append(result)
         logger.info("Walk-forward complete: %d/%d folds evaluated", len(results), n_splits)
         return results

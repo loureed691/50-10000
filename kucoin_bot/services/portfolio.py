@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from kucoin_bot.api.client import KuCoinClient
-from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
-from kucoin_bot.services.signal_engine import SignalScores, Regime
+from kucoin_bot.services.risk_manager import PositionInfo, RiskManager
+from kucoin_bot.services.signal_engine import Regime, SignalScores
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +81,7 @@ class PortfolioManager:
             weight = score / total_score
             strategy = self._select_strategy(sig)
             lev = self.risk_mgr.compute_leverage(sig, sig.volatility)
-            allocs[sym] = AllocationTarget(
-                symbol=sym, weight=weight, strategy=strategy, max_leverage=lev
-            )
+            allocs[sym] = AllocationTarget(symbol=sym, weight=weight, strategy=strategy, max_leverage=lev)
 
         # Zero-weight the rest
         for sym in universe:
@@ -145,17 +143,23 @@ class PortfolioManager:
                 amount=amount,
                 client_oid=idempotency_key,
             )
-            self._transfer_log.append({
-                "key": idempotency_key,
-                "from": from_account,
-                "to": to_account,
-                "currency": currency,
-                "amount": amount,
-                "result": result,
-            })
+            self._transfer_log.append(
+                {
+                    "key": idempotency_key,
+                    "from": from_account,
+                    "to": to_account,
+                    "currency": currency,
+                    "amount": amount,
+                    "result": result,
+                }
+            )
             logger.info(
                 "Transfer %s %s from %s to %s (key=%s)",
-                amount, currency, from_account, to_account, idempotency_key,
+                amount,
+                currency,
+                from_account,
+                to_account,
+                idempotency_key,
             )
             return idempotency_key
         except Exception:

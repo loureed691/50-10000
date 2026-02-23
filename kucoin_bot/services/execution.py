@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Dict, List, Optional
 
 from kucoin_bot.api.client import KuCoinClient
@@ -69,7 +69,9 @@ class ExecutionEngine:
         if market and market.spread_bps > self.max_spread_bps:
             logger.warning(
                 "Spread too wide for %s: %.1f bps (max %.1f)",
-                req.symbol, market.spread_bps, self.max_spread_bps,
+                req.symbol,
+                market.spread_bps,
+                self.max_spread_bps,
             )
             return OrderResult(success=False, message="spread_too_wide")
 
@@ -125,7 +127,13 @@ class ExecutionEngine:
                     oid = result.get("data", {}).get("orderId", "")
                     logger.info(
                         "Order placed: %s %s %.6f %s @ %.4f (oid=%s, reason=%s)",
-                        req.side, req.symbol, size, order_type, price, oid, req.reason,
+                        req.side,
+                        req.symbol,
+                        size,
+                        order_type,
+                        price,
+                        oid,
+                        req.reason,
                     )
                     return OrderResult(success=True, order_id=oid, avg_price=price, filled_qty=size)
                 else:

@@ -21,7 +21,7 @@ from typing import Deque, Dict
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_WINDOW = 20     # rolling trade window for expectancy calculation
+_DEFAULT_WINDOW = 20  # rolling trade window for expectancy calculation
 _DEFAULT_MIN_TRADES = 5  # minimum trades before auto-disable is considered
 
 
@@ -30,12 +30,8 @@ class ModuleStats:
     """Rolling statistics for one strategy module."""
 
     name: str
-    pnl_window: Deque[float] = field(
-        default_factory=lambda: collections.deque(maxlen=_DEFAULT_WINDOW)
-    )
-    cost_window: Deque[float] = field(
-        default_factory=lambda: collections.deque(maxlen=_DEFAULT_WINDOW)
-    )
+    pnl_window: Deque[float] = field(default_factory=lambda: collections.deque(maxlen=_DEFAULT_WINDOW))
+    cost_window: Deque[float] = field(default_factory=lambda: collections.deque(maxlen=_DEFAULT_WINDOW))
     enabled: bool = True
     disabled_reason: str = ""
 
@@ -122,8 +118,7 @@ class StrategyMonitor:
         if stats.net_expectancy < 0:
             stats.enabled = False
             stats.disabled_reason = (
-                f"negative_net_expectancy={stats.net_expectancy:.4f} "
-                f"over_last_{stats.trade_count}_trades"
+                f"negative_net_expectancy={stats.net_expectancy:.4f} " f"over_last_{stats.trade_count}_trades"
             )
             logger.warning(
                 "Auto-disabled strategy module '%s': %s",

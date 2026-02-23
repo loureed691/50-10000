@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import enum
-import os
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -28,10 +28,7 @@ def parse_bool(value: str) -> bool:
         return True
     if lower in _FALSE_STRINGS:
         return False
-    raise ValueError(
-        f"Cannot parse {value!r} as boolean. "
-        f"Use one of: {sorted(_TRUE_STRINGS | _FALSE_STRINGS)}"
-    )
+    raise ValueError(f"Cannot parse {value!r} as boolean. " f"Use one of: {sorted(_TRUE_STRINGS | _FALSE_STRINGS)}")
 
 
 class Mode(str, enum.Enum):

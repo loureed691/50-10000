@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
-import pytest
+
 import numpy as np
+import pytest
 
 # Ensure we're in BACKTEST mode during tests
 os.environ["BOT_MODE"] = "BACKTEST"

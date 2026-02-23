@@ -38,11 +38,16 @@ class VolatilityBreakout(BaseStrategy):
                 pnl_pct = -pnl_pct
             if pnl_pct < -self.stop_pct:
                 return StrategyDecision(
-                    action="exit", symbol=signals.symbol, order_type="market", reason="vol_stop",
+                    action="exit",
+                    symbol=signals.symbol,
+                    order_type="market",
+                    reason="vol_stop",
                 )
             if pnl_pct > self.stop_pct * 2:
                 return StrategyDecision(
-                    action="exit", symbol=signals.symbol, reason="vol_take_profit",
+                    action="exit",
+                    symbol=signals.symbol,
+                    reason="vol_take_profit",
                 )
             return StrategyDecision(action="hold", symbol=signals.symbol, reason="in_breakout")
 

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
 import numpy as np
+import pytest
 
-from kucoin_bot.services.signal_engine import SignalEngine, Regime
+from kucoin_bot.services.signal_engine import Regime, SignalEngine
 
 
 class TestSignalEngine:
@@ -123,7 +123,8 @@ class TestSignalEngine:
         scores_no_ob = engine.compute("TEST-USDT", klines)
         # With agreeing orderbook (positive imbalance with positive momentum)
         scores_ob = engine.compute(
-            "TEST-USDT", klines,
+            "TEST-USDT",
+            klines,
             orderbook={"bids": [["100", "100"]], "asks": [["100", "10"]]},
         )
         # Confidence should be higher when orderbook agrees with momentum
@@ -143,7 +144,9 @@ class TestSignalEngine:
             low = price * 0.997
             vol_high = 1000 if i > 50 else 100
             vol_low = 10 if i > 50 else 100
-            klines_high_vol.append([i * 3600, str(o), str(price), str(h), str(low), str(vol_high), str(vol_high * price)])
+            klines_high_vol.append(
+                [i * 3600, str(o), str(price), str(h), str(low), str(vol_high), str(vol_high * price)]
+            )
             klines_low_vol.append([i * 3600, str(o), str(price), str(h), str(low), str(vol_low), str(vol_low * price)])
         scores_high = engine.compute("HI-USDT", klines_high_vol)
         scores_low = engine.compute("LO-USDT", klines_low_vol)

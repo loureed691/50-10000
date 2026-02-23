@@ -20,8 +20,8 @@ from kucoin_bot.services.signal_engine import Regime, SignalScores
 logger = logging.getLogger(__name__)
 
 # Short squeeze risk thresholds
-_SQUEEZE_VOL_THRESHOLD = 0.6           # volatility spike blocks new shorts
-_SQUEEZE_MOMENTUM_THRESHOLD = 0.5      # strong positive momentum burst
+_SQUEEZE_VOL_THRESHOLD = 0.6  # volatility spike blocks new shorts
+_SQUEEZE_MOMENTUM_THRESHOLD = 0.5  # strong positive momentum burst
 _SQUEEZE_VOLUME_ANOMALY_THRESHOLD = 2.5  # volume anomaly accompanying momentum burst
 
 # Funding rate below which shorts are considered crowded
@@ -33,7 +33,7 @@ _CROWDED_SHORT_FUNDING_THRESHOLD = -0.0003  # per 8-hour period
 class SideDecision:
     """Output of the side selector."""
 
-    side: str            # "long", "short", or "flat"
+    side: str  # "long", "short", or "flat"
     reason: str = ""
     squeeze_risk: bool = False
 
@@ -76,8 +76,7 @@ class SideSelector:
 
         if side == "short":
             can_short = self.allow_shorts and (
-                market_type in ("futures", "margin")
-                or not self.require_futures_for_short
+                market_type in ("futures", "margin") or not self.require_futures_for_short
             )
             if not can_short:
                 return SideDecision(side="flat", reason="short_not_available")

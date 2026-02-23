@@ -10,25 +10,25 @@ import signal
 import sys
 import time
 
-from kucoin_bot.config import load_config, BotConfig
 from kucoin_bot.api.client import KuCoinClient
-from kucoin_bot.services.market_data import MarketDataService
-from kucoin_bot.services.signal_engine import SignalEngine, SignalScores
-from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
-from kucoin_bot.services.portfolio import PortfolioManager, AllocationTarget
-from kucoin_bot.services.execution import ExecutionEngine, OrderRequest, OrderResult
+from kucoin_bot.backtest.engine import DEFAULT_SLIPPAGE_BPS, DEFAULT_TAKER_FEE, BacktestEngine
+from kucoin_bot.config import BotConfig, load_config
+from kucoin_bot.reporting.cli import print_dashboard
 from kucoin_bot.services.cost_model import CostModel
+from kucoin_bot.services.execution import ExecutionEngine, OrderRequest, OrderResult
+from kucoin_bot.services.market_data import MarketDataService
+from kucoin_bot.services.portfolio import AllocationTarget, PortfolioManager
+from kucoin_bot.services.risk_manager import PositionInfo, RiskManager
 from kucoin_bot.services.side_selector import SideSelector
+from kucoin_bot.services.signal_engine import SignalEngine, SignalScores
 from kucoin_bot.services.strategy_monitor import StrategyMonitor
 from kucoin_bot.strategies.base import BaseStrategy
-from kucoin_bot.strategies.trend import TrendFollowing
-from kucoin_bot.strategies.mean_reversion import MeanReversion
-from kucoin_bot.strategies.volatility_breakout import VolatilityBreakout
-from kucoin_bot.strategies.scalping import Scalping
 from kucoin_bot.strategies.hedge import HedgeMode
+from kucoin_bot.strategies.mean_reversion import MeanReversion
 from kucoin_bot.strategies.risk_off import RiskOff
-from kucoin_bot.backtest.engine import BacktestEngine, DEFAULT_TAKER_FEE, DEFAULT_SLIPPAGE_BPS
-from kucoin_bot.reporting.cli import print_dashboard
+from kucoin_bot.strategies.scalping import Scalping
+from kucoin_bot.strategies.trend import TrendFollowing
+from kucoin_bot.strategies.volatility_breakout import VolatilityBreakout
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,8 @@ async def _compute_total_equity(
 
 async def run_live(cfg: BotConfig) -> None:
     """Main live trading loop (also handles PAPER and SHADOW modes)."""
-    from kucoin_bot.models import init_db, SignalSnapshot  # requires sqlalchemy
+    from kucoin_bot.models import SignalSnapshot, init_db  # requires sqlalchemy
+
     print(DISCLAIMER)
 
     is_paper = cfg.is_paper
@@ -190,7 +191,11 @@ async def run_live(cfg: BotConfig) -> None:
 
     logger.info(
         "Starting %s loop with %d strategies | EV gate: %.0f bps | cooldown: %d bars (%d cycles)",
-        mode_label, len(strategies), cfg.risk.min_ev_bps, cfg.risk.cooldown_bars, cooldown_cycles,
+        mode_label,
+        len(strategies),
+        cfg.risk.min_ev_bps,
+        cfg.risk.cooldown_bars,
+        cooldown_cycles,
     )
     cycle = 0
 
@@ -209,7 +214,10 @@ async def run_live(cfg: BotConfig) -> None:
                     try:
                         if not is_shadow and not is_paper:
                             await exec_engine.flatten_position(
-                                sym, pos.size, close_price, pos.side,
+                                sym,
+                                pos.size,
+                                close_price,
+                                pos.side,
                             )
                         risk_mgr.update_position(sym, PositionInfo(symbol=sym, side=pos.side, size=0))
                     except Exception:
@@ -246,7 +254,7 @@ async def run_live(cfg: BotConfig) -> None:
             active_strategies: dict[str, str] = {}
             universe_syms = market_data.get_symbols()
             if cfg.max_symbols > 0:
-                universe_syms = universe_syms[:cfg.max_symbols]
+                universe_syms = universe_syms[: cfg.max_symbols]
             position_syms = [s for s in risk_mgr.positions if s not in universe_syms]
             symbols_to_process = universe_syms + position_syms
 
@@ -263,9 +271,7 @@ async def run_live(cfg: BotConfig) -> None:
                     logger.error("Error fetching signals for %s", sym, exc_info=True)
 
             # Compute portfolio allocations across all symbols at once
-            batch_allocs = portfolio_mgr.compute_allocations(
-                all_signals, list(all_signals.keys())
-            )
+            batch_allocs = portfolio_mgr.compute_allocations(all_signals, list(all_signals.keys()))
 
             for sym in symbols_to_process:
                 if sym not in all_signals:
@@ -312,7 +318,8 @@ async def run_live(cfg: BotConfig) -> None:
                         if cfg.live_diagnostic:
                             logger.debug(
                                 "[MONITOR] Skipping %s: module '%s' auto-disabled",
-                                sym, alloc.strategy,
+                                sym,
+                                alloc.strategy,
                             )
                         if not pos:
                             continue
@@ -327,28 +334,30 @@ async def run_live(cfg: BotConfig) -> None:
 
                     # Log decision
                     with db_session_factory() as session:
-                        session.add(SignalSnapshot(
-                            symbol=sym,
-                            regime=signals.regime.value,
-                            strategy_name=alloc.strategy,
-                            signal_data=json.dumps(signals.to_dict()),
-                            decision=decision.action,
-                            reason=decision.reason,
-                        ))
+                        session.add(
+                            SignalSnapshot(
+                                symbol=sym,
+                                regime=signals.regime.value,
+                                strategy_name=alloc.strategy,
+                                signal_data=json.dumps(signals.to_dict()),
+                                decision=decision.action,
+                                reason=decision.reason,
+                            )
+                        )
                         session.commit()
 
                     # Side selector: validate proposed side (squeeze filter, feasibility)
                     if decision.action.startswith("entry_") and not pos:
                         mkt_type = market.market_type if market else "spot"
                         proposed_side = "long" if "long" in decision.action else "short"
-                        side_dec = side_selector.select(
-                            signals, market_type=mkt_type, proposed_side=proposed_side
-                        )
+                        side_dec = side_selector.select(signals, market_type=mkt_type, proposed_side=proposed_side)
                         if side_dec.side == "flat":
                             if cfg.live_diagnostic:
                                 logger.debug(
                                     "[SIDE-SELECTOR] Blocked %s %s: %s",
-                                    sym, proposed_side, side_dec.reason,
+                                    sym,
+                                    proposed_side,
+                                    side_dec.reason,
                                 )
                             continue
 
@@ -371,7 +380,10 @@ async def run_live(cfg: BotConfig) -> None:
                             if cfg.live_diagnostic:
                                 logger.debug(
                                     "[EV-GATE] Blocked %s: expected %.1f bps < cost %.1f bps + buffer %.1f",
-                                    sym, expected_bps, costs.total_bps, cfg.risk.min_ev_bps,
+                                    sym,
+                                    expected_bps,
+                                    costs.total_bps,
+                                    cfg.risk.min_ev_bps,
                                 )
                             continue
 
@@ -385,7 +397,10 @@ async def run_live(cfg: BotConfig) -> None:
                     # exposure check below (pending entry not yet in risk_mgr.positions).
                     if decision.action.startswith("entry_") and not pos:
                         notional = risk_mgr.compute_position_size(
-                            sym, market.last_price if market else 0, signals.volatility, signals,
+                            sym,
+                            market.last_price if market else 0,
+                            signals.volatility,
+                            signals,
                             leverage=alloc.max_leverage,
                         )
                     else:
@@ -400,9 +415,7 @@ async def run_live(cfg: BotConfig) -> None:
                         correlated = [s for s in risk_mgr.positions if s.startswith(base + "-")]
                         if sym not in correlated:
                             correlated.append(sym)
-                        if risk_mgr.check_correlated_exposure(
-                            correlated, prospective_notional=notional * alloc.weight
-                        ):
+                        if risk_mgr.check_correlated_exposure(correlated, prospective_notional=notional * alloc.weight):
                             logger.warning("Correlated exposure limit reached for base %s, skipping %s", base, sym)
                             continue
 
@@ -415,8 +428,11 @@ async def run_live(cfg: BotConfig) -> None:
                             if is_shadow:
                                 logger.info(
                                     "[SHADOW] Would %s %s notional=%.2f @ %.4f reason=%s",
-                                    side, sym, trade_notional,
-                                    market.last_price if market else 0, decision.reason,
+                                    side,
+                                    sym,
+                                    trade_notional,
+                                    market.last_price if market else 0,
+                                    decision.reason,
                                 )
                             elif is_paper:
                                 # Simulate fill: use last price with taker slippage and taker fee.
@@ -437,24 +453,34 @@ async def run_live(cfg: BotConfig) -> None:
                                     )
                                     logger.info(
                                         "[PAPER] Simulated %s %s qty=%.6f @ %.4f fee=%.4f",
-                                        side, sym, filled_qty, fill_px, paper_fee,
+                                        side,
+                                        sym,
+                                        filled_qty,
+                                        fill_px,
+                                        paper_fee,
                                     )
                                     pos_side = "long" if "long" in decision.action else "short"
-                                    risk_mgr.update_position(sym, PositionInfo(
-                                        symbol=sym,
-                                        side=pos_side,
-                                        size=result.filled_qty,
-                                        entry_price=result.avg_price,
-                                        current_price=result.avg_price,
-                                        leverage=alloc.max_leverage,
-                                    ))
+                                    risk_mgr.update_position(
+                                        sym,
+                                        PositionInfo(
+                                            symbol=sym,
+                                            side=pos_side,
+                                            size=result.filled_qty,
+                                            entry_price=result.avg_price,
+                                            current_price=result.avg_price,
+                                            leverage=alloc.max_leverage,
+                                        ),
+                                    )
                                     last_entry_cycle[sym] = cycle
                             else:
                                 # Transfer funds if trading on a futures market
                                 mkt_type_entry = market.market_type if market else "spot"
                                 if mkt_type_entry == "futures" and cfg.allow_internal_transfers:
                                     xfer = await portfolio_mgr.transfer_if_needed(
-                                        "USDT", "trade", "futures", trade_notional,
+                                        "USDT",
+                                        "trade",
+                                        "futures",
+                                        trade_notional,
                                     )
                                     if xfer is None:
                                         logger.warning("Futures transfer failed for %s, skipping entry", sym)
@@ -475,15 +501,18 @@ async def run_live(cfg: BotConfig) -> None:
                                 if result.success and result.filled_qty > 0:
                                     pos_side = "long" if "long" in decision.action else "short"
                                     acct = "futures" if mkt_type_entry == "futures" else "trade"
-                                    risk_mgr.update_position(sym, PositionInfo(
-                                        symbol=sym,
-                                        side=pos_side,
-                                        size=result.filled_qty,
-                                        entry_price=result.avg_price,
-                                        current_price=result.avg_price,
-                                        leverage=alloc.max_leverage,
-                                        account_type=acct,
-                                    ))
+                                    risk_mgr.update_position(
+                                        sym,
+                                        PositionInfo(
+                                            symbol=sym,
+                                            side=pos_side,
+                                            size=result.filled_qty,
+                                            entry_price=result.avg_price,
+                                            current_price=result.avg_price,
+                                            leverage=alloc.max_leverage,
+                                            account_type=acct,
+                                        ),
+                                    )
                                     last_entry_cycle[sym] = cycle
 
                     elif decision.action == "exit":
@@ -498,7 +527,11 @@ async def run_live(cfg: BotConfig) -> None:
                                 # No real API call is made – paper mode only.
                                 last_px = market.last_price if market else 0
                                 slip_dir = 1 if side == "buy" else -1
-                                fill_px = last_px * (1 + slip_dir * DEFAULT_SLIPPAGE_BPS / 10_000) if last_px > 0 else pos.entry_price
+                                fill_px = (
+                                    last_px * (1 + slip_dir * DEFAULT_SLIPPAGE_BPS / 10_000)
+                                    if last_px > 0
+                                    else pos.entry_price
+                                )
                                 paper_fee = pos.size * fill_px * DEFAULT_TAKER_FEE
                                 raw_pnl = (fill_px - pos.entry_price) * pos.size
                                 if pos.side == "short":
@@ -506,9 +539,14 @@ async def run_live(cfg: BotConfig) -> None:
                                 pnl = raw_pnl - paper_fee
                                 risk_mgr.record_pnl(pnl)
                                 risk_mgr.update_equity(risk_mgr.current_equity + pnl)
-                                risk_mgr.update_position(sym, PositionInfo(
-                                    symbol=sym, side=pos.side, size=0,
-                                ))
+                                risk_mgr.update_position(
+                                    sym,
+                                    PositionInfo(
+                                        symbol=sym,
+                                        side=pos.side,
+                                        size=0,
+                                    ),
+                                )
                                 strategy_monitor.record_trade(alloc.strategy, raw_pnl, paper_fee)
                                 logger.info("[PAPER] Simulated exit %s pnl=%.4f fee=%.4f", sym, pnl, paper_fee)
                             else:
@@ -516,10 +554,9 @@ async def run_live(cfg: BotConfig) -> None:
                                     OrderRequest(
                                         symbol=sym,
                                         side=side,
-                                        notional=abs(pos.size * (
-                                            pos.current_price if pos.current_price > 0
-                                            else pos.entry_price
-                                        )),
+                                        notional=abs(
+                                            pos.size * (pos.current_price if pos.current_price > 0 else pos.entry_price)
+                                        ),
                                         order_type=decision.order_type,
                                         reason=decision.reason,
                                         reduce_only=is_futures_exit,
@@ -531,13 +568,17 @@ async def run_live(cfg: BotConfig) -> None:
                                     if pos.side == "short":
                                         pnl = -pnl
                                     risk_mgr.record_pnl(pnl)
-                                    risk_mgr.update_position(sym, PositionInfo(
-                                        symbol=sym, side=pos.side, size=0,
-                                    ))
+                                    risk_mgr.update_position(
+                                        sym,
+                                        PositionInfo(
+                                            symbol=sym,
+                                            side=pos.side,
+                                            size=0,
+                                        ),
+                                    )
                                     # Estimate exit fee from fill to track net expectancy
                                     trade_cost = (
-                                        pos.size * result.avg_price * DEFAULT_TAKER_FEE
-                                        if result.avg_price > 0 else 0.0
+                                        pos.size * result.avg_price * DEFAULT_TAKER_FEE if result.avg_price > 0 else 0.0
                                     )
                                     strategy_monitor.record_trade(alloc.strategy, pnl, trade_cost)
                                     # Transfer proceeds back from futures account
@@ -545,7 +586,10 @@ async def run_live(cfg: BotConfig) -> None:
                                         margin = abs(pos.size * pos.entry_price / max(pos.leverage, 1.0))
                                         exit_value = max(0, margin + pnl)
                                         await portfolio_mgr.transfer_if_needed(
-                                            "USDT", "futures", "trade", exit_value,
+                                            "USDT",
+                                            "futures",
+                                            "trade",
+                                            exit_value,
                                         )
 
                 except Exception:
@@ -580,6 +624,7 @@ def run_backtest(cfg: BotConfig) -> None:
 
     # Generate sample data for demo
     import numpy as np
+
     rng = np.random.RandomState(42)
     n = 500
     price = 30000.0

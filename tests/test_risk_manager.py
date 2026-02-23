@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from kucoin_bot.config import RiskConfig
-from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
-from kucoin_bot.services.signal_engine import SignalScores, Regime
+from kucoin_bot.services.risk_manager import PositionInfo, RiskManager
+from kucoin_bot.services.signal_engine import Regime, SignalScores
 
 
 class TestRiskManager:
@@ -104,7 +104,7 @@ class TestRiskManager:
         # conf_factor = max(0.1, 0.5 ** 1.5) ≈ 0.3536
         # notional = 200 * 0.2 * 0.3536 ≈ 14.14
         assert size > 0
-        expected = 10_000 * 0.02 * 0.2 * (0.5 ** 1.5)
+        expected = 10_000 * 0.02 * 0.2 * (0.5**1.5)
         assert size == pytest.approx(expected, rel=0.01)
 
     def test_correlated_exposure_below_limit(self):

@@ -106,9 +106,7 @@ class MarketDataService:
 
         # Filter
         self.universe = {
-            sym: info
-            for sym, info in eligible.items()
-            if info.spread_bps <= MAX_SPREAD_BPS and info.last_price > 0
+            sym: info for sym, info in eligible.items() if info.spread_bps <= MAX_SPREAD_BPS and info.last_price > 0
         }
         logger.info("Market universe: %d USDT pairs", len(self.universe))
 

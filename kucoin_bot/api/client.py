@@ -153,7 +153,7 @@ class KuCoinClient:
                 ) as resp:
                     data = await resp.json()
                     if resp.status == 429:
-                        wait = 2 ** attempt
+                        wait = 2**attempt
                         logger.warning("Rate-limited (429), backing off %ds", wait)
                         await _async_sleep(wait)
                         continue
@@ -178,7 +178,9 @@ class KuCoinClient:
         resp = await self._public_get("/api/v1/market/orderbook/level1", {"symbol": symbol})
         return resp.get("data", {})
 
-    async def get_klines(self, symbol: str, kline_type: str = "1hour", start: Optional[int] = None, end: Optional[int] = None) -> List[list]:
+    async def get_klines(
+        self, symbol: str, kline_type: str = "1hour", start: Optional[int] = None, end: Optional[int] = None
+    ) -> List[list]:
         params: dict = {"symbol": symbol, "type": kline_type}
         if start:
             params["startAt"] = start
@@ -232,6 +234,7 @@ class KuCoinClient:
             body["clientOid"] = client_oid
         else:
             import uuid
+
             body["clientOid"] = str(uuid.uuid4())
         if size is not None:
             body["size"] = str(size)
@@ -268,6 +271,7 @@ class KuCoinClient:
         client_oid: Optional[str] = None,
     ) -> dict:
         import uuid
+
         body = {
             "clientOid": client_oid or str(uuid.uuid4()),
             "currency": currency,
@@ -282,9 +286,7 @@ class KuCoinClient:
     # ------------------------------------------------------------------
 
     async def get_futures_contracts(self) -> List[dict]:
-        resp = await self._request(
-            "GET", "/api/v1/contracts/active", signed=False, base_url=self._futures_rest_url
-        )
+        resp = await self._request("GET", "/api/v1/contracts/active", signed=False, base_url=self._futures_rest_url)
         return resp.get("data", [])
 
     async def get_futures_position(self, symbol: str) -> dict:
@@ -305,6 +307,7 @@ class KuCoinClient:
         reduce_only: bool = False,
     ) -> dict:
         import uuid
+
         body: Dict[str, Any] = {
             "clientOid": client_oid or str(uuid.uuid4()),
             "symbol": symbol,
@@ -322,4 +325,5 @@ class KuCoinClient:
 
 async def _async_sleep(seconds: float) -> None:
     import asyncio
+
     await asyncio.sleep(seconds)
