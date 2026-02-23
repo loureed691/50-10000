@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 MAX_SPREAD_BPS = 100  # 1 %
 MIN_VOL_VALUE = 10_000.0  # minimum 24 h traded amount (USDT)
-_KLINE_CACHE_TTL = 60.0  # seconds
+_KLINE_CACHE_TTL = 60.0  # seconds – fallback; candle-aware logic preferred
 
 # Map kline type strings to their period in seconds for correct time window calculation
 _KLINE_PERIOD_SECONDS: Dict[str, int] = {
@@ -174,15 +174,35 @@ class MarketDataService:
             return await self.get_klines_futures(symbol, kline_type, bars)
         return await self.get_klines_spot(symbol, kline_type, bars)
 
+    def _candle_still_fresh(self, klines: List[list], kline_type: str, now: float) -> bool:
+        """Return True if no new candle has closed since the last kline.
+
+        Uses the last (most recent) timestamp in the ascending-sorted kline
+        array and the candle period to decide whether a fresh API call is
+        needed.  Falls back to ``False`` (= refetch) when the data is empty.
+        """
+        if not klines:
+            return False
+        period = _KLINE_PERIOD_SECONDS.get(kline_type, 3600)
+        try:
+            last_ts = int(klines[-1][0])
+        except (IndexError, ValueError, TypeError):
+            return False
+        return now < last_ts + period
+
     async def get_klines_spot(self, symbol: str, kline_type: str = "1hour", bars: int = 200) -> List[list]:
-        """Fetch spot klines with TTL-based caching."""
+        """Fetch spot klines with candle-aware caching.
+
+        A new API call is made only when a new candle has closed (i.e. the
+        current time exceeds the last candle timestamp plus one period).
+        """
         cache_key = f"{symbol}:{kline_type}"
         now = time.time()
 
         cached = self._kline_cache.get(cache_key)
         if cached is not None:
             cached_data, ts = cached
-            if now - ts < _KLINE_CACHE_TTL:
+            if self._candle_still_fresh(cached_data, kline_type, now):
                 return list(cached_data)
 
         now_int = int(now)
@@ -197,14 +217,14 @@ class MarketDataService:
         return data
 
     async def get_klines_futures(self, symbol: str, kline_type: str = "1hour", bars: int = 200) -> List[list]:
-        """Fetch futures klines with TTL-based caching."""
+        """Fetch futures klines with candle-aware caching."""
         cache_key = f"{symbol}:{kline_type}:futures"
         now = time.time()
 
         cached = self._kline_cache.get(cache_key)
         if cached is not None:
             cached_data, ts = cached
-            if now - ts < _KLINE_CACHE_TTL:
+            if self._candle_still_fresh(cached_data, kline_type, now):
                 return list(cached_data)
 
         now_int = int(now)

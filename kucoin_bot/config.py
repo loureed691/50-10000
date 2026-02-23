@@ -139,6 +139,12 @@ class BotConfig:
     # Symbols with open positions are always included regardless of this cap.
     max_symbols: int = 0
 
+    # Fast-path interval (seconds): how often the fast loop runs for
+    # order-polling, stop checks, circuit-breaker evaluation, and
+    # cancel/flatten operations.  Slow path (klines + regime + allocation)
+    # runs only when a new candle has closed.
+    fast_interval: int = 30
+
     # Logging
     log_level: str = "INFO"
 
@@ -208,6 +214,7 @@ def load_config() -> BotConfig:
         db_url=os.getenv("DB_URL", "sqlite:///kucoin_bot.db"),
         redis_url=os.getenv("REDIS_URL") or None,
         max_symbols=_int_env("MAX_SYMBOLS", 0),
+        fast_interval=_int_env("FAST_INTERVAL", 30),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         risk=RiskConfig(
             max_daily_loss_pct=_float_env("MAX_DAILY_LOSS_PCT", 3.0),
