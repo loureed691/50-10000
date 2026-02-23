@@ -188,7 +188,7 @@ class MarketDataService:
             last_ts = int(klines[-1][0])
         except (IndexError, ValueError, TypeError):
             return False
-        return now < last_ts + 2 * period
+        return now < last_ts + period
 
     async def get_klines_spot(self, symbol: str, kline_type: str = "1hour", bars: int = 200) -> List[list]:
         """Fetch spot klines with candle-aware caching.

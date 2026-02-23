@@ -261,8 +261,8 @@ class TestCandleStillFresh:
         period = _KLINE_PERIOD_SECONDS["1hour"]  # 3600
         last_ts = 1_700_000_000
         klines = [["1699996400"], [str(last_ts)]]
-        # now is 2 full periods after the last candle → stale
-        assert svc._candle_still_fresh(klines, "1hour", last_ts + 2 * period) is False
+        # now is past the candle close → stale
+        assert svc._candle_still_fresh(klines, "1hour", last_ts + period) is False
 
     def test_invalid_timestamp_returns_false(self):
         svc = self._make_service()
@@ -274,8 +274,8 @@ class TestCandleStillFresh:
         period = _KLINE_PERIOD_SECONDS["5min"]  # 300
         last_ts = 1_700_000_000
         klines = [[str(last_ts)]]
-        assert svc._candle_still_fresh(klines, "5min", last_ts + period + 100) is True
-        assert svc._candle_still_fresh(klines, "5min", last_ts + 2 * period) is False
+        assert svc._candle_still_fresh(klines, "5min", last_ts + period - 1) is True
+        assert svc._candle_still_fresh(klines, "5min", last_ts + period) is False
 
 
 @pytest.mark.asyncio

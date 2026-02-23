@@ -293,6 +293,7 @@ async def run_live(cfg: BotConfig) -> None:
         slow_period,
     )
     cycle = 0
+    active_strategies: dict[str, str] = {}
 
     while not stop_event.is_set():
         # Check kill switch
@@ -386,7 +387,7 @@ async def run_live(cfg: BotConfig) -> None:
                 # Process each pair
                 # Build the symbol list: universe symbols (optionally capped) plus
                 # any symbols that have open positions so they are always managed.
-                active_strategies: dict[str, str] = {}
+                active_strategies.clear()
                 universe_syms = market_data.get_symbols()
                 if cfg.max_symbols > 0:
                     universe_syms = universe_syms[: cfg.max_symbols]
@@ -732,7 +733,7 @@ async def run_live(cfg: BotConfig) -> None:
 
             # Dashboard
             if cycle % dashboard_interval == 0:
-                print_dashboard(risk_mgr, active_strategies if run_slow else {})
+                print_dashboard(risk_mgr, active_strategies)
                 if cfg.live_diagnostic:
                     logger.info("[MONITOR] %s", strategy_monitor.get_status())
 
