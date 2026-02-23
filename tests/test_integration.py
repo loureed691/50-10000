@@ -199,6 +199,42 @@ class TestPortfolioManager:
         result = await pm.transfer_if_needed("USDT", "unknown", "trade", 100)
         assert result is None
 
+    def test_news_spike_selects_risk_off(self):
+        """NEWS_SPIKE regime should always select risk_off strategy."""
+        client = MagicMock(spec=KuCoinClient)
+        risk_mgr = RiskManager(config=RiskConfig())
+        risk_mgr.update_equity(10_000)
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr)
+
+        signals = {
+            "BTC-USDT": SignalScores(
+                symbol="BTC-USDT", regime=Regime.NEWS_SPIKE,
+                confidence=0.8, volatility=0.9, momentum=0.7, trend_strength=0.6,
+            ),
+        }
+        allocs = pm.compute_allocations(signals, ["BTC-USDT"])
+        assert allocs["BTC-USDT"].strategy == "risk_off"
+
+    def test_trending_regime_gets_allocation_boost(self):
+        """Trending regimes with strong trend should get higher scores than weak ones."""
+        client = MagicMock(spec=KuCoinClient)
+        risk_mgr = RiskManager(config=RiskConfig())
+        risk_mgr.update_equity(10_000)
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr)
+
+        signals = {
+            "STRONG-USDT": SignalScores(
+                symbol="STRONG-USDT", regime=Regime.TRENDING_UP,
+                confidence=0.6, volatility=0.3, momentum=0.4, trend_strength=0.7,
+            ),
+            "WEAK-USDT": SignalScores(
+                symbol="WEAK-USDT", regime=Regime.UNKNOWN,
+                confidence=0.6, volatility=0.3, momentum=0.1, trend_strength=0.2,
+            ),
+        }
+        allocs = pm.compute_allocations(signals, ["STRONG-USDT", "WEAK-USDT"])
+        assert allocs["STRONG-USDT"].weight > allocs["WEAK-USDT"].weight
+
 
 class TestCooldownLogic:
     """Verify cooldown allows first-ever entries immediately."""

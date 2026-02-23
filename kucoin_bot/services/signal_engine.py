@@ -85,10 +85,21 @@ class SignalEngine:
 
         scores = SignalScores(symbol=symbol)
 
-        # --- Momentum (ROC) ---
+        # --- Momentum (ROC, volume-weighted) ---
         if closes[-1] != 0 and closes[0] != 0:
             roc = (closes[-1] - closes[0]) / closes[0]
-            scores.momentum = float(np.clip(roc * 10, -1, 1))
+            raw_momentum = float(np.clip(roc * 10, -1, 1))
+            # Amplify momentum when volume confirms the move (anomaly > 1),
+            # dampen when volume is below average (anomaly < 0).
+            vol_weight = 1.0
+            if len(volumes) > 20 and np.std(volumes[:-1]) > 0:
+                vol_std = float(np.std(volumes[:-5]))
+                if vol_std > 0:
+                    recent_vol_z = float(
+                        (np.mean(volumes[-5:]) - np.mean(volumes[:-5])) / vol_std
+                    )
+                    vol_weight = float(np.clip(0.5 + recent_vol_z * 0.25, 0.5, 1.5))
+            scores.momentum = float(np.clip(raw_momentum * vol_weight, -1, 1))
 
         # --- Trend strength (ADX-like via directional movement) ---
         scores.trend_strength = self._trend_strength(closes, highs, lows)
@@ -202,14 +213,31 @@ class SignalEngine:
 
     @staticmethod
     def _compute_confidence(scores: SignalScores) -> float:
-        """Composite confidence from signal agreement."""
-        factors = []
-        factors.append(scores.trend_strength)
-        factors.append(min(abs(scores.momentum), 1.0))
-        factors.append(1.0 - scores.volatility)  # prefer lower vol
-        if factors:
-            return float(np.clip(sum(factors) / len(factors), 0, 1))
-        return 0.0
+        """Composite confidence from signal agreement.
+
+        Base confidence comes from trend strength, momentum, and volatility.
+        Directional agreement between momentum and orderbook gives a bonus.
+        Volume confirmation also adds a small bonus.
+        """
+        # Base factors (always present)
+        base_factors = [
+            scores.trend_strength,
+            min(abs(scores.momentum), 1.0),
+            1.0 - scores.volatility,  # prefer lower vol
+        ]
+        base_conf = sum(base_factors) / len(base_factors)
+
+        # Bonus: momentum and orderbook point the same direction
+        bonus = 0.0
+        if scores.orderbook_imbalance != 0.0 and scores.momentum != 0.0:
+            if (scores.momentum > 0) == (scores.orderbook_imbalance > 0):
+                bonus += 0.05
+
+        # Bonus: above-average volume confirms the move
+        if scores.volume_anomaly > 0.5:
+            bonus += min(scores.volume_anomaly / 10.0, 0.05)
+
+        return float(np.clip(base_conf + bonus, 0, 1))
 
     @staticmethod
     def _orderbook_imbalance(orderbook: Optional[dict]) -> float:

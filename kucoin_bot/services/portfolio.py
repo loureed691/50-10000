@@ -61,8 +61,16 @@ class PortfolioManager:
             sig = signals.get(sym)
             if not sig or sig.confidence < 0.1:
                 continue
-            # Prefer higher confidence, lower vol
-            score = sig.confidence * max(1.0 - sig.volatility, 0.2)
+            # Prefer higher confidence, lower vol; penalise high-vol regimes
+            vol_floor = max(1.0 - sig.volatility, 0.2)
+            # Regime bonus: trending regimes with alignment get a boost
+            regime_bonus = 1.0
+            if sig.regime in (Regime.TRENDING_UP, Regime.TRENDING_DOWN):
+                if sig.trend_strength > 0.5:
+                    regime_bonus = 1.2
+            elif sig.regime == Regime.HIGH_VOLATILITY:
+                regime_bonus = 0.7  # reduce allocation in chaotic regimes
+            score = sig.confidence * vol_floor * regime_bonus
             scored.append((sym, score, sig))
 
         # Normalize weights
@@ -88,6 +96,10 @@ class PortfolioManager:
     @staticmethod
     def _select_strategy(sig: SignalScores) -> str:
         """Select best strategy for the current regime."""
+        if sig.regime == Regime.NEWS_SPIKE:
+            return "risk_off"  # never trade into a news spike
+        if sig.regime == Regime.LOW_LIQUIDITY:
+            return "risk_off"  # avoid illiquid markets
         if sig.regime == Regime.HIGH_VOLATILITY:
             if abs(sig.momentum) > 0.5:
                 return "volatility_breakout"

@@ -110,6 +110,11 @@ class SideSelector:
             return "short"
         if signals.regime == Regime.RANGING and signals.mean_reversion < -0.3:
             return "short"
+        # Cross-regime: strong momentum + strong trend can still signal
+        if signals.trend_strength > 0.6 and signals.momentum > 0.3:
+            return "long"
+        if signals.trend_strength > 0.6 and signals.momentum < -0.3:
+            return "short"
         return "flat"
 
     def _squeeze_risk_high(self, signals: SignalScores) -> bool:
@@ -117,11 +122,13 @@ class SideSelector:
 
         Squeeze risk is flagged when:
 
-        * Recent volatility is spiking (wide candle ranges).
+        * Recent volatility is spiking (wide candle ranges) **and** momentum
+          is positive – high volatility alone during a confirmed downtrend is
+          normal and should not block shorts.
         * Strong positive momentum burst coincides with a volume anomaly,
           suggesting aggressive buying / covering pressure.
         """
-        if signals.volatility > _SQUEEZE_VOL_THRESHOLD:
+        if signals.volatility > _SQUEEZE_VOL_THRESHOLD and signals.momentum > 0:
             return True
         if (
             signals.momentum > _SQUEEZE_MOMENTUM_THRESHOLD
