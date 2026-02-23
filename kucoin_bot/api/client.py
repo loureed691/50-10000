@@ -396,6 +396,17 @@ class KuCoinClient:
         resp = await self._request("GET", "/api/v1/positions", base_url=self._futures_rest_url)
         return list(resp.get("data", []))
 
+    async def change_margin_mode(self, symbol: str, margin_mode: str = "ISOLATED") -> dict:
+        """Switch margin mode for a futures symbol.
+
+        ``margin_mode`` should be ``"ISOLATED"`` or ``"CROSS"``.
+        The switch will fail if there are open positions or orders on the symbol.
+        """
+        body = {"symbol": symbol, "marginMode": margin_mode}
+        return await self._request(
+            "POST", "/api/v2/position/changeMarginMode", body=body, base_url=self._futures_rest_url
+        )
+
     async def place_futures_order(
         self,
         symbol: str,
@@ -406,6 +417,7 @@ class KuCoinClient:
         price: Optional[float] = None,
         client_oid: Optional[str] = None,
         reduce_only: bool = False,
+        margin_mode: str = "ISOLATED",
     ) -> dict:
         body: Dict[str, Any] = {
             "clientOid": client_oid or str(uuid.uuid4()),
@@ -414,6 +426,7 @@ class KuCoinClient:
             "type": order_type,
             "size": size,
             "leverage": str(leverage),
+            "marginMode": margin_mode,
         }
         if price is not None:
             body["price"] = str(price)

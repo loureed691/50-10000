@@ -180,3 +180,75 @@ class TestExecutionEngine:
         result = await engine.execute(req, market)
         assert not result.success
         assert result.message == "spread_too_wide"
+
+    @pytest.mark.asyncio
+    async def test_futures_order_sets_margin_mode(self) -> None:
+        """Execution engine should call change_margin_mode before the first futures order."""
+        engine, client = self._make_engine()
+        client.change_margin_mode.return_value = {"code": "200000"}
+        client.place_futures_order.return_value = {"code": "200000", "data": {"orderId": "fut-mm"}}
+
+        market = MarketInfo(
+            symbol="XBTUSDTM",
+            base="BTC",
+            quote="USDT",
+            base_min_size=1.0,
+            price_increment=0.1,
+            last_price=50000.0,
+            market_type="futures",
+            contract_multiplier=0.001,
+            lot_size=1,
+        )
+        req = OrderRequest(symbol="XBTUSDTM", side="buy", notional=500.0, order_type="market")
+        result = await engine.execute(req, market)
+
+        assert result.success
+        client.change_margin_mode.assert_called_once_with("XBTUSDTM", "ISOLATED")
+
+    @pytest.mark.asyncio
+    async def test_margin_mode_called_once_per_symbol(self) -> None:
+        """change_margin_mode should only be called once per symbol, not on every order."""
+        engine, client = self._make_engine()
+        client.change_margin_mode.return_value = {"code": "200000"}
+        client.place_futures_order.return_value = {"code": "200000", "data": {"orderId": "fut-x"}}
+
+        market = MarketInfo(
+            symbol="XBTUSDTM",
+            base="BTC",
+            quote="USDT",
+            base_min_size=1.0,
+            price_increment=0.1,
+            last_price=50000.0,
+            market_type="futures",
+            contract_multiplier=0.001,
+            lot_size=1,
+        )
+        req = OrderRequest(symbol="XBTUSDTM", side="buy", notional=500.0, order_type="market")
+        await engine.execute(req, market)
+        await engine.execute(req, market)
+
+        assert client.change_margin_mode.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_margin_mode_failure_does_not_block_order(self) -> None:
+        """If change_margin_mode fails, the order should still be attempted."""
+        engine, client = self._make_engine()
+        client.change_margin_mode.side_effect = Exception("cannot switch")
+        client.place_futures_order.return_value = {"code": "200000", "data": {"orderId": "fut-ok"}}
+
+        market = MarketInfo(
+            symbol="XBTUSDTM",
+            base="BTC",
+            quote="USDT",
+            base_min_size=1.0,
+            price_increment=0.1,
+            last_price=50000.0,
+            market_type="futures",
+            contract_multiplier=0.001,
+            lot_size=1,
+        )
+        req = OrderRequest(symbol="XBTUSDTM", side="buy", notional=500.0, order_type="market")
+        result = await engine.execute(req, market)
+
+        assert result.success
+        client.place_futures_order.assert_called_once()
