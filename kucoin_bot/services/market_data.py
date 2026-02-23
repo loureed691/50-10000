@@ -125,6 +125,11 @@ class MarketDataService:
 
         now_int = int(now)
         data = await self.client.get_klines(symbol, kline_type, start=now_int - bars * 3600, end=now_int)
+        # KuCoin returns klines in descending time order (newest first).
+        # The signal engine expects ascending order (oldest first), so sort
+        # by the timestamp field (index 0).
+        if data and len(data) > 1:
+            data = sorted(data, key=lambda k: int(k[0]))
         self._kline_cache[cache_key] = (data, now)
         return data
 

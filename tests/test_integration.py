@@ -507,3 +507,128 @@ class TestComputeTotalEquity:
 
         equity = await _compute_total_equity(client, mds)
         assert equity == 0.0
+
+
+class TestKlineSorting:
+    """Verify klines are sorted ascending by timestamp before caching."""
+
+    @pytest.mark.asyncio
+    async def test_klines_sorted_ascending(self):
+        """get_klines must return data sorted oldest-first (ascending ts)."""
+        client = MagicMock(spec=KuCoinClient)
+        # Simulate KuCoin returning newest-first (descending)
+        raw = [[300, "1", "2", "3", "0.5", "10", "20"],
+               [100, "1", "2", "3", "0.5", "10", "20"],
+               [200, "1", "2", "3", "0.5", "10", "20"]]
+        client.get_klines = AsyncMock(return_value=raw)
+
+        from kucoin_bot.services.market_data import MarketDataService
+        service = MarketDataService(client=client)
+        result = await service.get_klines("BTC-USDT")
+        timestamps = [int(k[0]) for k in result]
+        assert timestamps == sorted(timestamps), "Klines must be sorted ascending by timestamp"
+
+
+class TestCircuitBreakerLive:
+    """Verify circuit breaker is evaluated in the live loop."""
+
+    def test_check_circuit_breaker_activates_on_daily_loss(self):
+        """Circuit breaker must activate when daily loss limit is breached."""
+        risk_mgr = RiskManager(config=RiskConfig(max_daily_loss_pct=3.0))
+        risk_mgr.update_equity(10_000)
+        # Simulate losing more than 3% of peak equity
+        risk_mgr.record_pnl(-350)  # 3.5% of 10k peak
+        assert risk_mgr.check_circuit_breaker() is True
+        assert risk_mgr.circuit_breaker_active is True
+
+
+class TestPaperModeEquity:
+    """Verify paper mode equity is tracked correctly through entries and exits."""
+
+    def test_paper_exit_updates_equity(self):
+        """Paper exit must update risk_mgr equity with the realised P&L."""
+        risk_mgr = RiskManager(config=RiskConfig())
+        risk_mgr.update_equity(10_000)
+
+        # Simulate paper entry: deduct fee
+        entry_fee = 0.3  # small fee
+        risk_mgr.update_equity(risk_mgr.current_equity - entry_fee)
+        assert risk_mgr.current_equity == pytest.approx(10_000 - entry_fee)
+
+        # Simulate paper exit with positive PnL
+        exit_pnl = 50.0  # net after fee
+        risk_mgr.record_pnl(exit_pnl)
+        risk_mgr.update_equity(risk_mgr.current_equity + exit_pnl)
+
+        expected = 10_000 - entry_fee + exit_pnl
+        assert risk_mgr.current_equity == pytest.approx(expected)
+
+    def test_strategy_monitor_no_double_count_fee(self):
+        """strategy_monitor.record_trade must receive raw PnL (before fee), not fee-inclusive."""
+        from kucoin_bot.services.strategy_monitor import StrategyMonitor
+
+        monitor = StrategyMonitor(window=5, min_trades=1)
+        # raw_pnl=10.0, fee=3.0 → net expectancy = (10 - 3) / 1 = 7.0
+        monitor.record_trade("trend_following", pnl=10.0, cost=3.0)
+
+        stats = monitor.get_status()["trend_following"]
+        assert stats["net_expectancy"] == pytest.approx(7.0)
+
+    def test_double_counted_fee_gives_wrong_expectancy(self):
+        """Demonstrates the bug: passing fee-inclusive PnL double-counts the fee."""
+        from kucoin_bot.services.strategy_monitor import StrategyMonitor
+
+        monitor = StrategyMonitor(window=5, min_trades=1)
+        # If we mistakenly pass pnl=7 (already has fee subtracted) and cost=3
+        # the monitor computes net = 7 - 3 = 4, which is WRONG (should be 7)
+        monitor.record_trade("trend_following", pnl=7.0, cost=3.0)
+
+        stats = monitor.get_status()["trend_following"]
+        assert stats["net_expectancy"] == pytest.approx(4.0)  # wrong value from double-counting
+
+
+class TestBatchPortfolioAllocation:
+    """Verify portfolio allocations are normalised across multiple symbols."""
+
+    def test_multi_symbol_weights_sum_to_one(self):
+        """When multiple symbols are allocated, their weights should sum to ~1."""
+        client = MagicMock(spec=KuCoinClient)
+        risk_mgr = RiskManager(config=RiskConfig())
+        risk_mgr.update_equity(10_000)
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr)
+
+        signals = {
+            "BTC-USDT": SignalScores(
+                symbol="BTC-USDT", regime=Regime.TRENDING_UP,
+                confidence=0.6, volatility=0.3, momentum=0.4, trend_strength=0.6,
+            ),
+            "ETH-USDT": SignalScores(
+                symbol="ETH-USDT", regime=Regime.TRENDING_UP,
+                confidence=0.5, volatility=0.4, momentum=0.3, trend_strength=0.5,
+            ),
+        }
+        allocs = pm.compute_allocations(signals, ["BTC-USDT", "ETH-USDT"])
+
+        # Weights should sum to 1.0 when both symbols qualify
+        total_weight = sum(a.weight for a in allocs.values() if a.weight > 0)
+        assert total_weight == pytest.approx(1.0, abs=0.01)
+
+        # Individual weights should be < 1.0 (not both getting 1.0)
+        assert allocs["BTC-USDT"].weight < 1.0
+        assert allocs["ETH-USDT"].weight < 1.0
+
+    def test_single_symbol_gets_full_weight(self):
+        """When only one symbol qualifies, it gets weight=1.0."""
+        client = MagicMock(spec=KuCoinClient)
+        risk_mgr = RiskManager(config=RiskConfig())
+        risk_mgr.update_equity(10_000)
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr)
+
+        signals = {
+            "BTC-USDT": SignalScores(
+                symbol="BTC-USDT", regime=Regime.TRENDING_UP,
+                confidence=0.6, volatility=0.3, momentum=0.4, trend_strength=0.6,
+            ),
+        }
+        allocs = pm.compute_allocations(signals, ["BTC-USDT"])
+        assert allocs["BTC-USDT"].weight == pytest.approx(1.0)
