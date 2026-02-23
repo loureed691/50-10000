@@ -100,6 +100,87 @@ async def _compute_total_equity(
         return 0.0
 
 
+async def _reconcile_positions(
+    client: KuCoinClient,
+    risk_mgr: RiskManager,
+    market_data: "MarketDataService",
+    log: logging.Logger,
+    mode_label: str,
+) -> None:
+    """Reconcile open positions from the exchange on startup.
+
+    Fetches open futures positions and rebuilds risk manager state so the bot
+    knows about positions that were opened in a previous session.
+    """
+    # Reconcile futures positions
+    try:
+        positions = await client.get_futures_positions()
+        if isinstance(positions, list):
+            for pos in positions:
+                if not pos:
+                    continue
+                sym = pos.get("symbol", "")
+                qty = float(pos.get("currentQty", 0) or 0)
+                if qty == 0:
+                    continue
+                entry_price = float(pos.get("avgEntryPrice", 0) or 0)
+                mark_price = float(pos.get("markPrice", 0) or 0)
+                leverage = float(pos.get("realLeverage", 1) or 1)
+                side = "long" if qty > 0 else "short"
+                unrealized = float(pos.get("unrealisedPnl", 0) or 0)
+                risk_mgr.update_position(
+                    sym,
+                    PositionInfo(
+                        symbol=sym,
+                        side=side,
+                        size=abs(qty),
+                        entry_price=entry_price,
+                        current_price=mark_price if mark_price > 0 else entry_price,
+                        leverage=leverage,
+                        account_type="futures",
+                        unrealized_pnl=unrealized,
+                    ),
+                )
+                log.info(
+                    "[%s] Reconciled futures position: %s %s qty=%.6f entry=%.4f",
+                    mode_label,
+                    side,
+                    sym,
+                    abs(qty),
+                    entry_price,
+                )
+    except Exception:
+        log.warning("Failed to reconcile futures positions", exc_info=True)
+
+    # Reconcile open spot orders (log them, don't rebuild positions from orders)
+    try:
+        open_orders = await client.get_open_orders()
+        if open_orders:
+            log.info("[%s] Found %d open spot orders on startup", mode_label, len(open_orders))
+            for o in open_orders:
+                log.info(
+                    "[%s]   Order %s: %s %s %s @ %s",
+                    mode_label,
+                    o.get("id", "?"),
+                    o.get("side", "?"),
+                    o.get("symbol", "?"),
+                    o.get("size", "?"),
+                    o.get("price", "?"),
+                )
+    except Exception:
+        log.warning("Failed to fetch open spot orders", exc_info=True)
+
+    # Reconcile open futures orders
+    try:
+        fut_orders = await client.get_futures_open_orders()
+        if fut_orders:
+            log.info("[%s] Found %d open futures orders on startup", mode_label, len(fut_orders))
+    except Exception:
+        log.warning("Failed to fetch open futures orders", exc_info=True)
+
+    log.info("[%s] Reconciliation complete. Positions: %d", mode_label, len(risk_mgr.positions))
+
+
 async def run_live(cfg: BotConfig) -> None:
     """Main live trading loop (also handles PAPER and SHADOW modes)."""
     from kucoin_bot.models import SignalSnapshot, init_db  # requires sqlalchemy
@@ -166,6 +247,10 @@ async def run_live(cfg: BotConfig) -> None:
     if total_equity > 0:
         risk_mgr.update_equity(total_equity)
         logger.info("[%s] Total portfolio equity: %.2f USDT", mode_label, total_equity)
+
+    # Startup reconciliation: rebuild risk state from exchange truth
+    if not is_paper and not is_shadow:
+        await _reconcile_positions(client, risk_mgr, market_data, logger, mode_label)
 
     # Kill switch handler
     stop_event = asyncio.Event()

@@ -115,8 +115,8 @@ class BotConfig:
     kill_switch: bool = False
     live_trading: bool = False  # Must be explicitly true to allow LIVE mode
 
-    # Transfers
-    allow_internal_transfers: bool = False
+    # Transfers (default True so futures entries can move margin automatically)
+    allow_internal_transfers: bool = True
 
     # Observability
     live_diagnostic: bool = False
@@ -202,7 +202,7 @@ def load_config() -> BotConfig:
         mode=mode_val.value,
         kill_switch=_bool_env("KILL_SWITCH"),
         live_trading=_bool_env("LIVE_TRADING"),
-        allow_internal_transfers=_bool_env("ALLOW_INTERNAL_TRANSFERS"),
+        allow_internal_transfers=_bool_env("ALLOW_INTERNAL_TRANSFERS", "true"),
         live_diagnostic=_bool_env("LIVE_DIAGNOSTIC"),
         db_type=os.getenv("DB_TYPE", "sqlite"),
         db_url=os.getenv("DB_URL", "sqlite:///kucoin_bot.db"),

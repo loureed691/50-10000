@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from kucoin_bot.api.client import KuCoinClient
 from kucoin_bot.services.risk_manager import PositionInfo, RiskManager
@@ -40,9 +40,10 @@ class PortfolioManager:
 
     client: KuCoinClient
     risk_mgr: RiskManager
-    allow_transfers: bool = False
+    allow_transfers: bool = True
     allocations: Dict[str, AllocationTarget] = field(default_factory=dict)
     _transfer_log: List[dict] = field(default_factory=list)
+    _db_session_factory: Optional[Any] = None
 
     def compute_allocations(
         self,
@@ -153,6 +154,25 @@ class PortfolioManager:
                     "result": result,
                 }
             )
+            # Persist transfer record to DB if available
+            if self._db_session_factory is not None:
+                try:
+                    from kucoin_bot.models import TransferRecord
+
+                    with self._db_session_factory() as session:
+                        session.add(
+                            TransferRecord(
+                                idempotency_key=idempotency_key,
+                                from_account=from_account,
+                                to_account=to_account,
+                                currency=currency,
+                                amount=amount,
+                                status="success",
+                            )
+                        )
+                        session.commit()
+                except Exception:
+                    logger.warning("Failed to persist transfer record to DB", exc_info=True)
             logger.info(
                 "Transfer %s %s from %s to %s (key=%s)",
                 amount,
