@@ -544,6 +544,9 @@ async def run_live(cfg: BotConfig) -> None:
 
                         # Correlated exposure check: group symbols by base asset.
                         # Prospective notional is included to prevent same-cycle bypass.
+                        # We use the full per-position notional (not weight-adjusted)
+                        # because trade_notional is no longer scaled by alloc.weight;
+                        # position sizing already constrains each position.
                         if decision.action.startswith("entry_") and not pos:
                             if notional <= 0:
                                 continue
@@ -551,7 +554,7 @@ async def run_live(cfg: BotConfig) -> None:
                             correlated = [s for s in risk_mgr.positions if s.startswith(base + "-")]
                             if sym not in correlated:
                                 correlated.append(sym)
-                            if risk_mgr.check_correlated_exposure(correlated, prospective_notional=notional * alloc.weight):
+                            if risk_mgr.check_correlated_exposure(correlated, prospective_notional=notional):
                                 logger.warning("Correlated exposure limit reached for base %s, skipping %s", base, sym)
                                 continue
 
@@ -559,7 +562,7 @@ async def run_live(cfg: BotConfig) -> None:
                         if decision.action.startswith("entry_"):
                             if notional > 0:
                                 side = "buy" if "long" in decision.action else "sell"
-                                trade_notional = notional * alloc.weight
+                                trade_notional = notional
 
                                 if is_shadow:
                                     logger.info(
