@@ -120,17 +120,13 @@ class RiskManager:
         if price <= 0:
             return 0.0
 
-        # Per-position risk cap
+        # Per-position risk cap.  Volatility and confidence are already
+        # captured in the allocation weight produced by PortfolioManager, so
+        # we intentionally do NOT scale down here to avoid double-penalising
+        # small-account futures orders.
         max_risk_usd = self.current_equity * (self.config.max_per_position_risk_pct / 100)
 
-        # Volatility adjustment: reduce size when vol is high
-        vol_factor = max(0.2, 1.0 - volatility)
-
-        # Confidence adjustment: exponential scaling rewards high-confidence trades
-        # and penalises low-confidence ones more aggressively than linear scaling.
-        conf_factor = max(0.1, signals.confidence**1.5)
-
-        notional = max_risk_usd * vol_factor * conf_factor
+        notional = max_risk_usd
 
         # Ensure doesn't blow total exposure
         existing_exposure = sum(abs(p.size * p.current_price) for p in self.positions.values())

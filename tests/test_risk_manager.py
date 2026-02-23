@@ -95,16 +95,15 @@ class TestRiskManager:
         assert rm.daily_pnl == 0.0
         assert rm.circuit_breaker_active is True
 
-    def test_position_sizing_high_vol_uses_floor(self):
-        """Volatility=1.0 should use the vol_factor floor (0.2), not zero."""
+    def test_position_sizing_high_vol_uses_full_risk_cap(self):
+        """Volatility and confidence adjustments are handled by allocation weights,
+        so compute_position_size returns the full per-position risk cap."""
         rm = self._make_risk_mgr(10_000)
         signals = SignalScores(symbol="ZEC-USDT", confidence=0.5, volatility=1.0)
         size = rm.compute_position_size("ZEC-USDT", 30, 1.0, signals)
-        # vol_factor = max(0.2, 1.0 - 1.0) = 0.2
-        # conf_factor = max(0.1, 0.5 ** 1.5) ≈ 0.3536
-        # notional = 200 * 0.2 * 0.3536 ≈ 14.14
+        # notional = equity * max_per_position_risk_pct / 100 = 200
         assert size > 0
-        expected = 10_000 * 0.02 * 0.2 * (0.5**1.5)
+        expected = 10_000 * 0.02
         assert size == pytest.approx(expected, rel=0.01)
 
     def test_correlated_exposure_below_limit(self):
@@ -153,3 +152,22 @@ class TestRiskManager:
         )
         # Existing: 900 USDT (9%). Prospective: 500 USDT (5%). Total 14% < 30% → False
         assert rm.check_correlated_exposure(["BTC-USDT"], prospective_notional=500) is False
+
+    def test_small_account_futures_sizing_is_usable(self):
+        """A $50 account must produce a trade_notional large enough for futures.
+
+        This is a regression test for the bug where vol_factor * conf_factor
+        combined with allocation-weight multiplication shrank futures orders
+        to fractions of a cent.
+        """
+        rm = self._make_risk_mgr(50)  # small starter account
+        signals = SignalScores(
+            symbol="NFPUSDTM",
+            confidence=0.311,
+            volatility=1.0,
+        )
+        notional = rm.compute_position_size("NFPUSDTM", 0.05, 1.0, signals, leverage=1.0)
+        # Must be the full per-position risk cap: $50 * 2% = $1.0
+        assert notional == pytest.approx(1.0, rel=0.01)
+        # Critical: notional must be >= $1 so a futures transfer is meaningful
+        assert notional >= 1.0
