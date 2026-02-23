@@ -62,7 +62,7 @@ class PortfolioManager:
             if not sig or sig.confidence < 0.1:
                 continue
             # Prefer higher confidence, lower vol
-            score = sig.confidence * (1.0 - sig.volatility)
+            score = sig.confidence * max(1.0 - sig.volatility, 0.2)
             scored.append((sym, score, sig))
 
         # Normalize weights

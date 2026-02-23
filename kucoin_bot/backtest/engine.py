@@ -331,7 +331,7 @@ class BacktestEngine:
                     live_funding_rate=signals.funding_rate if signals.funding_rate != 0 else None,
                     position_side=proposed_side,
                 )
-                expected_bps = signals.volatility * 100.0 * signals.confidence
+                expected_bps = max(signals.volatility, signals.trend_strength) * 100.0 * signals.confidence
                 if not cost_model.ev_gate(expected_bps, costs):
                     logger.debug(
                         "EV gate blocked %s entry: expected %.1f bps < cost %.1f bps + buffer %.1f",

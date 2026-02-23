@@ -95,7 +95,7 @@ class RiskConfig:
     max_per_position_risk_pct: float = 2.0
     max_correlated_exposure_pct: float = 30.0
     # EV gate: minimum expected-value buffer above round-trip costs (bps)
-    min_ev_bps: float = 10.0
+    min_ev_bps: float = 5.0
     # Minimum bars required between entry signals per symbol
     cooldown_bars: int = 5
 
@@ -213,7 +213,7 @@ def load_config() -> BotConfig:
             max_leverage=_float_env("MAX_LEVERAGE", 3.0),
             max_per_position_risk_pct=_float_env("MAX_PER_POSITION_RISK_PCT", 2.0),
             max_correlated_exposure_pct=_float_env("MAX_CORRELATED_EXPOSURE_PCT", 30.0),
-            min_ev_bps=_float_env("MIN_EV_BPS", 10.0),
+            min_ev_bps=_float_env("MIN_EV_BPS", 5.0),
             cooldown_bars=_int_env("COOLDOWN_BARS", 5),
         ),
         short=ShortConfig(

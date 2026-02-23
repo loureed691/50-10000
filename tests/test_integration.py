@@ -94,6 +94,22 @@ class TestPortfolioManager:
         allocs = pm.compute_allocations({}, ["BTC-USDT"])
         assert allocs["BTC-USDT"].weight == 0.0
 
+    def test_high_volatility_pair_gets_nonzero_weight(self):
+        """Pairs with volatility=1.0 should still get non-zero portfolio weight."""
+        client = MagicMock(spec=KuCoinClient)
+        risk_mgr = RiskManager(config=RiskConfig())
+        risk_mgr.update_equity(10_000)
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr)
+
+        signals = {
+            "ZEC-USDT": SignalScores(
+                symbol="ZEC-USDT", regime=Regime.HIGH_VOLATILITY,
+                confidence=0.55, volatility=1.0, momentum=1.0, trend_strength=0.68,
+            ),
+        }
+        allocs = pm.compute_allocations(signals, ["ZEC-USDT"])
+        assert allocs["ZEC-USDT"].weight > 0
+
     @pytest.mark.asyncio
     async def test_transfer_disabled(self):
         client = MagicMock(spec=KuCoinClient)
