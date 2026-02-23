@@ -349,7 +349,7 @@ async def run_live(cfg: BotConfig) -> None:
 
                     # Cooldown: enforce minimum bars between entries
                     if decision.action.startswith("entry_") and not pos:
-                        last_cycle = last_entry_cycle.get(sym, 0)
+                        last_cycle = last_entry_cycle.get(sym, -cooldown_cycles)
                         if cycle - last_cycle < cooldown_cycles:
                             continue
 

@@ -126,7 +126,7 @@ class RiskManager:
         max_risk_usd = self.current_equity * (self.config.max_per_position_risk_pct / 100)
 
         # Volatility adjustment: reduce size when vol is high
-        vol_factor = max(0.1, 1.0 - volatility)
+        vol_factor = max(0.2, 1.0 - volatility)
 
         # Confidence adjustment
         conf_factor = max(0.1, signals.confidence)

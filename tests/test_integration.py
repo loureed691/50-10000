@@ -127,6 +127,47 @@ class TestPortfolioManager:
         assert result is None
 
 
+class TestCooldownLogic:
+    """Verify cooldown allows first-ever entries immediately."""
+
+    def test_first_entry_not_blocked_by_cooldown(self):
+        """Symbols that have never been traded should not be blocked by cooldown."""
+        last_entry_cycle: dict[str, int] = {}
+        cooldown_cycles = 300  # 5 bars * 60 cycles
+
+        # Simulate first cycle
+        cycle = 1
+        sym = "BTC-USDT"
+        last_cycle = last_entry_cycle.get(sym, -cooldown_cycles)
+        assert cycle - last_cycle >= cooldown_cycles, (
+            "First-ever entry should not be blocked by cooldown"
+        )
+
+    def test_cooldown_blocks_recent_entry(self):
+        """After an entry, the same symbol should be blocked for cooldown_cycles."""
+        last_entry_cycle: dict[str, int] = {"BTC-USDT": 10}
+        cooldown_cycles = 300
+
+        cycle = 50
+        sym = "BTC-USDT"
+        last_cycle = last_entry_cycle.get(sym, -cooldown_cycles)
+        assert cycle - last_cycle < cooldown_cycles, (
+            "Recent entry should be in cooldown"
+        )
+
+    def test_cooldown_allows_after_expiry(self):
+        """After cooldown expires, the symbol should be allowed to enter."""
+        last_entry_cycle: dict[str, int] = {"BTC-USDT": 10}
+        cooldown_cycles = 300
+
+        cycle = 311
+        sym = "BTC-USDT"
+        last_cycle = last_entry_cycle.get(sym, -cooldown_cycles)
+        assert cycle - last_cycle >= cooldown_cycles, (
+            "Entry should be allowed after cooldown expires"
+        )
+
+
 class TestPaperMode:
     """Verify PAPER mode never calls the real order API."""
 
