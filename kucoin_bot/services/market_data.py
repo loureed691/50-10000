@@ -12,6 +12,7 @@ from kucoin_bot.api.client import KuCoinClient
 logger = logging.getLogger(__name__)
 
 MAX_SPREAD_BPS = 100  # 1 %
+MIN_VOL_VALUE = 10_000.0  # minimum 24 h traded amount (USDT)
 _KLINE_CACHE_TTL = 60.0  # seconds
 
 # Map kline type strings to their period in seconds for correct time window calculation
@@ -134,23 +135,35 @@ class MarketDataService:
         except Exception:
             logger.warning("Failed to refresh futures universe (spot universe remains available)", exc_info=True)
 
-        # Enrich with ticker data for top candidates (batch)
+        # Enrich with bulk ticker data (single request instead of per-symbol)
+        try:
+            all_tickers = await self.client.get_all_tickers()
+            ticker_map = {t["symbol"]: t for t in all_tickers if "symbol" in t}
+        except Exception:
+            logger.warning("get_all_tickers failed, falling back to empty ticker map", exc_info=True)
+            ticker_map = {}
+
         for sym, info in list(eligible.items()):
             if info.market_type == "futures":
                 continue
-            try:
-                ticker = await self.client.get_ticker(sym)
-                info.last_price = float(ticker.get("price", 0) or 0)
-                bid = float(ticker.get("bestBid", 0) or 0)
-                ask = float(ticker.get("bestAsk", 0) or 0)
-                if bid > 0 and ask > 0:
-                    info.spread_bps = (ask - bid) / ((ask + bid) / 2) * 10_000
-            except Exception:
-                pass
+            ticker = ticker_map.get(sym)
+            if ticker is None:
+                logger.debug("No ticker data for %s, skipping enrichment", sym)
+                continue
+            info.last_price = float(ticker.get("last", 0) or 0)
+            info.volume_24h = float(ticker.get("volValue", 0) or 0)
+            bid = float(ticker.get("buy", 0) or 0)
+            ask = float(ticker.get("sell", 0) or 0)
+            if bid > 0 and ask > 0:
+                info.spread_bps = (ask - bid) / ((ask + bid) / 2) * 10_000
 
-        # Filter
+        # Filter: spread, price, and minimum 24h volume for spot pairs
         self.universe = {
-            sym: info for sym, info in eligible.items() if info.spread_bps <= MAX_SPREAD_BPS and info.last_price > 0
+            sym: info
+            for sym, info in eligible.items()
+            if info.spread_bps <= MAX_SPREAD_BPS
+            and info.last_price > 0
+            and (info.market_type == "futures" or info.volume_24h >= MIN_VOL_VALUE)
         }
         logger.info("Market universe: %d USDT pairs", len(self.universe))
 

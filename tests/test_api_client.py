@@ -112,3 +112,7 @@ class TestClientEndpoints:
     def test_client_has_spot_cancel_all(self) -> None:
         client = KuCoinClient("k", "s", "p")
         assert hasattr(client, "cancel_all_orders")
+
+    def test_client_has_get_all_tickers(self) -> None:
+        client = KuCoinClient("k", "s", "p")
+        assert hasattr(client, "get_all_tickers")
