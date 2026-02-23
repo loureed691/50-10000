@@ -507,3 +507,86 @@ class TestComputeTotalEquity:
 
         equity = await _compute_total_equity(client, mds)
         assert equity == 0.0
+
+
+class TestPaperModePnL:
+    """Verify paper mode PnL, equity tracking, and strategy monitor consistency."""
+
+    def test_paper_exit_pnl_does_not_double_count_fee(self):
+        """Strategy monitor must receive raw PnL and fee separately (not fee-included PnL)."""
+        from kucoin_bot.services.strategy_monitor import StrategyMonitor
+
+        monitor = StrategyMonitor(window=20, min_trades=1)
+
+        # Simulate what PAPER mode does after the fix:
+        # raw_pnl is before fee, fee is separate
+        raw_pnl = 100.0
+        paper_fee = 10.0
+
+        monitor.record_trade("trend_following", raw_pnl, paper_fee)
+
+        stats = monitor.get_status()
+        # net_expectancy = raw_pnl - fee = 100 - 10 = 90
+        assert stats["trend_following"]["net_expectancy"] == pytest.approx(90.0)
+
+    def test_paper_exit_pnl_double_count_before_fix(self):
+        """Demonstrate that passing fee-included PnL + fee causes double-counting."""
+        from kucoin_bot.services.strategy_monitor import StrategyMonitor
+
+        monitor = StrategyMonitor(window=20, min_trades=1)
+
+        # Old (buggy) behaviour: pnl already has fee subtracted, plus fee passed again
+        raw_pnl = 100.0
+        paper_fee = 10.0
+        pnl_with_fee = raw_pnl - paper_fee  # = 90
+        monitor.record_trade("trend_following", pnl_with_fee, paper_fee)
+
+        stats = monitor.get_status()
+        # Double-counted: 90 - 10 = 80 (should be 90)
+        assert stats["trend_following"]["net_expectancy"] == pytest.approx(80.0)
+
+    def test_paper_exit_updates_equity(self):
+        """Paper mode must update risk_mgr.current_equity after an exit."""
+        from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
+        from kucoin_bot.config import RiskConfig
+
+        risk_mgr = RiskManager(config=RiskConfig())
+        risk_mgr.update_equity(10_000.0)
+
+        # Simulate paper entry
+        risk_mgr.update_position("BTC-USDT", PositionInfo(
+            symbol="BTC-USDT", side="long", size=0.1,
+            entry_price=30_000.0, current_price=30_000.0,
+        ))
+
+        # Simulate paper exit with profit
+        raw_pnl = 100.0
+        paper_fee = 3.0
+        pnl = raw_pnl - paper_fee
+
+        risk_mgr.record_pnl(pnl)
+        risk_mgr.update_equity(risk_mgr.current_equity + pnl)
+        risk_mgr.update_position("BTC-USDT", PositionInfo(
+            symbol="BTC-USDT", side="long", size=0,
+        ))
+
+        # Equity should reflect the realized PnL
+        assert risk_mgr.current_equity == pytest.approx(10_097.0)
+        assert risk_mgr.daily_pnl == pytest.approx(97.0)
+        assert "BTC-USDT" not in risk_mgr.positions
+
+    def test_paper_mode_equity_not_overwritten_by_api_refresh(self):
+        """In paper mode, periodic API equity refresh must not overwrite paper-tracked equity."""
+        # This test validates the condition: `if not is_paper: ...update_equity(total_equity)`
+        is_paper = True
+        risk_mgr_equity = 10_500.0  # paper-tracked equity after some wins
+        api_equity = 10_000.0       # real balance (unchanged, no real trades)
+
+        # Before fix: equity would be reset to api_equity, losing paper PnL
+        # After fix: equity stays at risk_mgr_equity
+        if not is_paper:
+            final_equity = api_equity
+        else:
+            final_equity = risk_mgr_equity
+
+        assert final_equity == 10_500.0

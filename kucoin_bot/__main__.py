@@ -17,7 +17,7 @@ from kucoin_bot.services.signal_engine import SignalEngine
 from kucoin_bot.services.risk_manager import RiskManager, PositionInfo
 from kucoin_bot.services.portfolio import PortfolioManager, AllocationTarget
 from kucoin_bot.services.execution import ExecutionEngine, OrderRequest, OrderResult
-from kucoin_bot.services.cost_model import CostModel
+from kucoin_bot.services.cost_model import CostModel, DEFAULT_TAKER_FEE, DEFAULT_SLIPPAGE_BPS
 from kucoin_bot.services.side_selector import SideSelector
 from kucoin_bot.services.strategy_monitor import StrategyMonitor
 from kucoin_bot.strategies.base import BaseStrategy
@@ -27,7 +27,7 @@ from kucoin_bot.strategies.volatility_breakout import VolatilityBreakout
 from kucoin_bot.strategies.scalping import Scalping
 from kucoin_bot.strategies.hedge import HedgeMode
 from kucoin_bot.strategies.risk_off import RiskOff
-from kucoin_bot.backtest.engine import BacktestEngine, DEFAULT_TAKER_FEE, DEFAULT_SLIPPAGE_BPS
+from kucoin_bot.backtest.engine import BacktestEngine
 from kucoin_bot.reporting.cli import print_dashboard
 
 logger = logging.getLogger(__name__)
@@ -228,9 +228,10 @@ async def run_live(cfg: BotConfig) -> None:
             # Refresh universe and full portfolio equity periodically
             if cycle % 60 == 1:
                 await market_data.refresh_universe()
-                total_equity = await _compute_total_equity(client, market_data)
-                if total_equity > 0:
-                    risk_mgr.update_equity(total_equity)
+                if not is_paper:
+                    total_equity = await _compute_total_equity(client, market_data)
+                    if total_equity > 0:
+                        risk_mgr.update_equity(total_equity)
 
             # Process each pair
             # Build the symbol list: universe symbols (optionally capped) plus
@@ -466,14 +467,16 @@ async def run_live(cfg: BotConfig) -> None:
                                 slip_dir = 1 if side == "buy" else -1
                                 fill_px = last_px * (1 + slip_dir * DEFAULT_SLIPPAGE_BPS / 10_000) if last_px > 0 else pos.entry_price
                                 paper_fee = pos.size * fill_px * DEFAULT_TAKER_FEE
-                                pnl = (fill_px - pos.entry_price) * pos.size - paper_fee
+                                raw_pnl = (fill_px - pos.entry_price) * pos.size
                                 if pos.side == "short":
-                                    pnl = -((fill_px - pos.entry_price) * pos.size) - paper_fee
+                                    raw_pnl = -((fill_px - pos.entry_price) * pos.size)
+                                pnl = raw_pnl - paper_fee
                                 risk_mgr.record_pnl(pnl)
+                                risk_mgr.update_equity(risk_mgr.current_equity + pnl)
                                 risk_mgr.update_position(sym, PositionInfo(
                                     symbol=sym, side=pos.side, size=0,
                                 ))
-                                strategy_monitor.record_trade(alloc.strategy, pnl, paper_fee)
+                                strategy_monitor.record_trade(alloc.strategy, raw_pnl, paper_fee)
                                 logger.info("[PAPER] Simulated exit %s pnl=%.4f fee=%.4f", sym, pnl, paper_fee)
                             else:
                                 result = await exec_engine.execute(

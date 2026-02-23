@@ -38,8 +38,8 @@ class Order(Base):
     status = Column(String(16), default="pending")
     account_type = Column(String(16), default="trade")  # trade / margin / futures
     leverage = Column(Float, default=1.0)
-    created_at = Column(DateTime, default=dt.datetime.utcnow)
-    updated_at = Column(DateTime, default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: dt.datetime.now(dt.UTC))
+    updated_at = Column(DateTime, default=lambda: dt.datetime.now(dt.UTC), onupdate=lambda: dt.datetime.now(dt.UTC))
 
 
 class Trade(Base):
@@ -56,7 +56,7 @@ class Trade(Base):
     fee = Column(Float, default=0.0)
     fee_currency = Column(String(16))
     realized_pnl = Column(Float, default=0.0)
-    timestamp = Column(DateTime, default=dt.datetime.utcnow)
+    timestamp = Column(DateTime, default=lambda: dt.datetime.now(dt.UTC))
 
 
 class SignalSnapshot(Base):
@@ -71,7 +71,7 @@ class SignalSnapshot(Base):
     signal_data = Column(Text)  # JSON blob of feature scores
     decision = Column(String(16))  # entry / exit / hold
     reason = Column(Text)
-    timestamp = Column(DateTime, default=dt.datetime.utcnow)
+    timestamp = Column(DateTime, default=lambda: dt.datetime.now(dt.UTC))
 
 
 class BalanceRecord(Base):
@@ -84,7 +84,7 @@ class BalanceRecord(Base):
     currency = Column(String(16))
     total = Column(Float)
     available = Column(Float)
-    timestamp = Column(DateTime, default=dt.datetime.utcnow)
+    timestamp = Column(DateTime, default=lambda: dt.datetime.now(dt.UTC))
 
 
 class TransferRecord(Base):
@@ -99,7 +99,7 @@ class TransferRecord(Base):
     currency = Column(String(16))
     amount = Column(Float)
     status = Column(String(16))
-    timestamp = Column(DateTime, default=dt.datetime.utcnow)
+    timestamp = Column(DateTime, default=lambda: dt.datetime.now(dt.UTC))
 
 
 class PnLRecord(Base):
@@ -113,7 +113,7 @@ class PnLRecord(Base):
     unrealized_pnl = Column(Float, default=0.0)
     total_equity = Column(Float, default=0.0)
     drawdown_pct = Column(Float, default=0.0)
-    timestamp = Column(DateTime, default=dt.datetime.utcnow)
+    timestamp = Column(DateTime, default=lambda: dt.datetime.now(dt.UTC))
 
 
 def init_db(db_url: str = "sqlite:///kucoin_bot.db") -> sessionmaker:
