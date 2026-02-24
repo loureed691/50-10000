@@ -254,6 +254,61 @@ class TestExecutionEngine:
         client.place_futures_order.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_retry_backoff_on_insufficient_balance(self) -> None:
+        """Retries should include a delay when 'Insufficient balance' is returned."""
+        engine, client = self._make_engine()
+        # All attempts fail with insufficient balance
+        client.place_futures_order.return_value = {
+            "code": "400100",
+            "msg": "Insufficient balance. 6.33 is required to place the order.",
+        }
+
+        market = MarketInfo(
+            symbol="XBTUSDTM",
+            base="BTC",
+            quote="USDT",
+            base_min_size=1.0,
+            price_increment=0.1,
+            last_price=50000.0,
+            market_type="futures",
+            contract_multiplier=0.001,
+            lot_size=1,
+        )
+        req = OrderRequest(symbol="XBTUSDTM", side="buy", notional=500.0, order_type="market")
+        result = await engine.execute(req, market)
+
+        assert not result.success
+        assert result.message == "max_retries_exceeded"
+        assert client.place_futures_order.call_count == engine.max_retries
+
+    @pytest.mark.asyncio
+    async def test_retry_succeeds_after_initial_rejection(self) -> None:
+        """Order should succeed on a later retry after an initial balance rejection."""
+        engine, client = self._make_engine()
+        client.place_futures_order.side_effect = [
+            {"code": "400100", "msg": "Insufficient balance. 6.33 is required."},
+            {"code": "200000", "data": {"orderId": "fut-retry"}},
+        ]
+
+        market = MarketInfo(
+            symbol="XBTUSDTM",
+            base="BTC",
+            quote="USDT",
+            base_min_size=1.0,
+            price_increment=0.1,
+            last_price=50000.0,
+            market_type="futures",
+            contract_multiplier=0.001,
+            lot_size=1,
+        )
+        req = OrderRequest(symbol="XBTUSDTM", side="buy", notional=500.0, order_type="market")
+        result = await engine.execute(req, market)
+
+        assert result.success
+        assert result.order_id == "fut-retry"
+        assert client.place_futures_order.call_count == 2
+
+    @pytest.mark.asyncio
     async def test_futures_order_sets_position_mode(self) -> None:
         """Execution engine should call change_position_mode before the first futures order."""
         engine, client = self._make_engine()
