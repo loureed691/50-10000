@@ -11,11 +11,13 @@ services:
       - DB_URL=${DB_URL:-sqlite:////app/data/kucoin_bot.db}
     volumes:
       - bot-data:/app/data
+    ports:
+      - "${METRICS_PORT:-9090}:9090"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import kucoin_bot; print('ok')"]
-      interval: 60s
-      timeout: 10s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9090/healthz')"]
+      interval: 30s
+      timeout: 5s
       retries: 3
       start_period: 30s
 

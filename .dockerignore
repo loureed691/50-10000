@@ -1,0 +1,32 @@
+# Secrets – NEVER copy into the image
+.env
+.env.*
+!.env.example
+
+# VCS
+.git
+.gitignore
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Dev / CI tooling
+.github/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+node_modules/
+
+# Data / logs
+*.db
+*.sqlite
+*.log
