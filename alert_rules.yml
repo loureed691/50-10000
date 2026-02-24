@@ -1,0 +1,40 @@
+# Example Prometheus alerting rules for the KuCoin trading bot.
+#
+# Load these into Prometheus/Alertmanager alongside a scrape config that
+# hits the bot's metrics endpoint (default: http://bot:9090/metrics).
+
+groups:
+  - name: kucoin_bot_alerts
+    rules:
+      - alert: CircuitBreakerActive
+        expr: circuit_breaker_active == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Circuit breaker is active – all trading halted"
+          description: "The bot's circuit breaker has been active for >1 min."
+
+      - alert: HighDailyLoss
+        expr: daily_pnl_usdt < -200
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Daily PnL exceeds -$200"
+
+      - alert: OrderPollTimeouts
+        expr: rate(orders_placed_total{status="poll_timeout"}[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Order poll timeouts detected in last 10 minutes"
+
+      - alert: HighOrderLatency
+        expr: order_latency_seconds_sum / order_latency_seconds_count > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Average order latency exceeds 5 seconds"

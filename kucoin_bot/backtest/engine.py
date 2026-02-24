@@ -147,6 +147,7 @@ class BacktestEngine:
         initial_equity: float = 10_000.0,
         warmup: int = 60,
         market_type: str = "spot",
+        kline_type: str = "",
     ) -> BacktestResult:
         """Run backtest on kline data with next-bar execution (no look-ahead).
 
@@ -162,6 +163,11 @@ class BacktestEngine:
             market_type: ``"spot"``, ``"futures"``, or ``"margin"`` – controls
                 whether funding/borrow costs are modelled and reduceOnly is
                 applied to exits.
+            kline_type: Optional kline interval string (e.g. ``"15min"``,
+                ``"1hour"``).  When provided, bar duration is derived from
+                ``_KLINE_PERIOD_SECONDS`` so funding and borrow costs scale
+                correctly.  If empty the engine infers bar duration from
+                adjacent kline timestamps.
         """
         rng = random.Random(self.seed)
         risk_mgr = RiskManager(config=self.risk_config)
@@ -172,6 +178,20 @@ class BacktestEngine:
         is_futures = market_type == "futures"
         is_margin = market_type == "margin"
         cooldown_bars = self._effective_cooldown_bars()
+
+        # Derive bar duration (hours) for funding/borrow cost scaling.
+        # Priority: explicit kline_type → inferred from kline timestamps → 1h default.
+        bar_duration_hours: float = 1.0
+        if kline_type:
+            from kucoin_bot.services.market_data import _KLINE_PERIOD_SECONDS
+            bar_duration_hours = _KLINE_PERIOD_SECONDS.get(kline_type, 3600) / 3600.0
+        elif len(klines) >= 2:
+            dt = abs(int(klines[1][0]) - int(klines[0][0]))
+            if dt > 0:
+                bar_duration_hours = dt / 3600.0
+
+        # Number of bars per 8-hour funding period
+        funding_period_bars = max(1, round(8.0 / bar_duration_hours))
 
         equity = initial_equity
         equity_curve = [equity]
@@ -268,18 +288,17 @@ class BacktestEngine:
             if position_side and position_size > 0:
                 holding_bars += 1
 
-                # Futures funding: paid every 8 bars (1-hour bars → every 8 hours)
-                # Positive rate: longs pay, shorts receive. Negative rate: the reverse.
-                if is_futures and holding_bars % 8 == 0:
+                # Futures funding: paid every funding_period_bars (scaled to actual bar duration)
+                if is_futures and holding_bars % funding_period_bars == 0:
                     funding = position_size * entry_price * cost_model.funding_rate_per_8h
                     if position_side == "short":
                         funding = -funding  # shorts receive when rate is positive, pay when negative
                     equity -= funding
                     total_funding_cost += funding
 
-                # Margin borrow: paid every bar for margin shorts
+                # Margin borrow: paid per bar, scaled to bar duration
                 if is_margin and position_side == "short":
-                    borrow = position_size * entry_price * cost_model.borrow_rate_per_hour
+                    borrow = position_size * entry_price * cost_model.borrow_rate_per_hour * bar_duration_hours
                     equity -= borrow
                     total_borrow_cost += borrow
 
@@ -331,7 +350,7 @@ class BacktestEngine:
                 is_margin_short = is_margin and proposed_side == "short"
                 costs = cost_model.estimate(
                     order_type=order_type_str,
-                    holding_hours=24.0,  # conservative expected holding
+                    holding_hours=bar_duration_hours * cooldown_bars * 3,  # expected holding scaled to bar duration
                     is_futures=is_futures,
                     is_margin_short=is_margin_short,
                     live_funding_rate=signals.funding_rate if signals.funding_rate != 0 else None,

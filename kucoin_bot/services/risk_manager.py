@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from kucoin_bot.config import RiskConfig
+from kucoin_bot.reporting.metrics import METRICS
 from kucoin_bot.services.signal_engine import SignalScores
 
 logger = logging.getLogger(__name__)
@@ -227,6 +228,13 @@ class RiskManager:
         dd = 0.0
         if self.peak_equity > 0:
             dd = (self.peak_equity - self.current_equity) / self.peak_equity * 100
+        # Emit metrics for external monitoring
+        METRICS.set("equity_usdt", self.current_equity)
+        METRICS.set("daily_pnl_usdt", self.daily_pnl)
+        METRICS.set("drawdown_pct", round(dd, 2))
+        METRICS.set("total_exposure_usdt", round(total_exposure, 2))
+        METRICS.set("open_positions", len(self.positions))
+        METRICS.set("circuit_breaker_active", 1.0 if self.circuit_breaker_active else 0.0)
         return {
             "equity": self.current_equity,
             "peak_equity": self.peak_equity,

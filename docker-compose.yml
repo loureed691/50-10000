@@ -12,20 +12,31 @@ services:
     volumes:
       - bot-data:/app/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import kucoin_bot; print('ok')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Optional: Postgres for production
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: kucoin_bot
-      POSTGRES_USER: bot
-      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: ${POSTGRES_DB:-kucoin_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - pg-data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     profiles:
       - production
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bot}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # Optional: Redis for fast state cache
   redis:
@@ -34,6 +45,11 @@ services:
       - "6379:6379"
     profiles:
       - production
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   bot-data:

@@ -11,6 +11,7 @@ from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Optional, Set
 
 from kucoin_bot.api.client import KuCoinClient
+from kucoin_bot.reporting.metrics import METRICS
 from kucoin_bot.services.market_data import MarketInfo
 from kucoin_bot.services.risk_manager import RiskManager
 
@@ -203,9 +204,15 @@ class ExecutionEngine:
                         req.reason,
                     )
 
+                    METRICS.inc("orders_placed_total", labels={"symbol": req.symbol, "side": req.side})
+
                     # Poll for fill confirmation instead of assuming filled
                     if self.poll_fills and oid:
-                        return await self._poll_order(oid, is_futures, price, size)
+                        poll_result = await self._poll_order(oid, is_futures, price, size)
+                        latency = time.monotonic() - t_placed
+                        METRICS.observe("order_latency_seconds", latency, labels={"symbol": req.symbol})
+                        METRICS.inc("orders_placed_total", labels={"symbol": req.symbol, "status": poll_result.status})
+                        return poll_result
 
                     return OrderResult(success=True, order_id=oid, avg_price=price, filled_qty=size, status="pending")
                 else:
