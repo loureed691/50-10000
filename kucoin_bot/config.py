@@ -95,6 +95,8 @@ class RiskConfig:
     min_ev_bps: float = 15.0
     # Minimum bars required between entry signals per symbol
     cooldown_bars: int = 3
+    # Circuit breaker: disabled by default
+    circuit_breaker_enabled: bool = False
 
 
 @dataclass
@@ -231,6 +233,7 @@ def load_config() -> BotConfig:
             max_correlated_exposure_pct=_float_env("MAX_CORRELATED_EXPOSURE_PCT", 30.0),
             min_ev_bps=_float_env("MIN_EV_BPS", 15.0),
             cooldown_bars=_int_env("COOLDOWN_BARS", 3),
+            circuit_breaker_enabled=_bool_env("CIRCUIT_BREAKER_ENABLED"),
         ),
         short=ShortConfig(
             allow_shorts=_bool_env("ALLOW_SHORTS", "true"),

@@ -32,9 +32,16 @@ class TestRiskManager:
 
     def test_circuit_breaker(self):
         rm = self._make_risk_mgr(10_000)
+        rm.config = RiskConfig(circuit_breaker_enabled=True)
         rm.daily_pnl = -500  # 5% daily loss
         assert rm.check_circuit_breaker() is True
         assert rm.circuit_breaker_active is True
+
+    def test_circuit_breaker_disabled_by_default(self):
+        rm = self._make_risk_mgr(10_000)
+        rm.daily_pnl = -500  # 5% daily loss
+        assert rm.check_circuit_breaker() is False
+        assert rm.circuit_breaker_active is False
 
     def test_position_sizing_respects_caps(self):
         rm = self._make_risk_mgr(10_000)
