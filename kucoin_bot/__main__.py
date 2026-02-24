@@ -432,7 +432,7 @@ async def run_live(cfg: BotConfig) -> None:
                 # Compute portfolio allocations across all symbols at once
                 batch_allocs = portfolio_mgr.compute_allocations(all_signals, list(all_signals.keys()))
 
-                _batch_db = os.getenv("BATCH_DB_WRITES", "1") != "0"
+                batch_db_enabled = os.getenv("BATCH_DB_WRITES", "1") != "0"
                 _snapshots: list = []
 
                 for sym in symbols_to_process:
@@ -787,9 +787,9 @@ async def run_live(cfg: BotConfig) -> None:
                         with db_session_factory() as db_sess:
                             for snap in _snapshots:
                                 db_sess.add(snap)
-                                if not _batch_db:
+                                if not batch_db_enabled:
                                     db_sess.commit()
-                            if _batch_db:
+                            if batch_db_enabled:
                                 db_sess.commit()
                     except Exception:
                         logger.exception("Failed to write signal snapshots to DB")

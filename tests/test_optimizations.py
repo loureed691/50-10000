@@ -540,9 +540,9 @@ class TestKlineOrdering:
 
     @pytest.mark.asyncio
     async def test_non_int_timestamps_fallback_to_sort(self):
-        """Non-integer timestamps fall back to sort gracefully."""
+        """Non-integer timestamps fall back to sort; data is still returned."""
         client = MagicMock()
-        # Non-int timestamps should trigger exception path and fallback to sort
+        # Non-int timestamps trigger the exception path in the try block
         raw = [
             ["abc", "1", "2", "3", "0.5", "10", "20"],
             ["def", "1", "2", "3", "0.5", "10", "20"],
@@ -550,10 +550,9 @@ class TestKlineOrdering:
         client.get_klines = AsyncMock(return_value=raw)
 
         service = MarketDataService(client=client)
-        # Should not raise, should return data (fallback sort may also fail but
-        # function should not crash)
-        try:
-            result = await service.get_klines_spot("BTC-USDT", "1hour")
-            assert len(result) == 2  # data is returned even if unsortable
-        except Exception:
-            pass  # If sort also fails, that's acceptable - no crash
+        # The fallback sort will also fail on non-int data, but the except
+        # clause in the sort logic catches it and the data is cached as-is.
+        # The function should not crash and should return some data.
+        result = await service.get_klines_spot("BTC-USDT", "1hour")
+        # Data is returned (possibly unsorted) rather than crashing
+        assert len(result) == 2

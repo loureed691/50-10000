@@ -227,7 +227,10 @@ class MarketDataService:
                 ):
                     data = sorted(data, key=lambda k: int(k[0]))
             except Exception:
-                data = sorted(data, key=lambda k: int(k[0]))
+                try:
+                    data = sorted(data, key=lambda k: int(k[0]))
+                except Exception:
+                    pass  # Return data unsorted rather than crashing
         self._kline_cache[cache_key] = (data, now)
         return data
 
@@ -271,7 +274,10 @@ class MarketDataService:
                 ):
                     result = sorted(result, key=lambda k: int(k[0]))
             except Exception:
-                result = sorted(result, key=lambda k: int(k[0]))
+                try:
+                    result = sorted(result, key=lambda k: int(k[0]))
+                except Exception:
+                    pass  # Return data unsorted rather than crashing
         self._kline_cache[cache_key] = (result, now)
         return result
 
