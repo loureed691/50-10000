@@ -88,6 +88,8 @@ class RiskManager:
 
     def check_circuit_breaker(self) -> bool:
         """Evaluate all circuit-breaker conditions. Activates if breached."""
+        if not self.config.circuit_breaker_enabled:
+            return False
         if self.circuit_breaker_active:
             return True
         if self.check_daily_loss() or self.check_drawdown() or self.check_total_exposure():

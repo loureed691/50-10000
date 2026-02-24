@@ -593,7 +593,7 @@ class TestCircuitBreakerLive:
 
     def test_check_circuit_breaker_activates_on_daily_loss(self):
         """Circuit breaker must activate when daily loss limit is breached."""
-        risk_mgr = RiskManager(config=RiskConfig(max_daily_loss_pct=3.0))
+        risk_mgr = RiskManager(config=RiskConfig(max_daily_loss_pct=3.0, circuit_breaker_enabled=True))
         risk_mgr.update_equity(10_000)
         # Simulate losing more than 3% of peak equity
         risk_mgr.record_pnl(-350)  # 3.5% of 10k peak
