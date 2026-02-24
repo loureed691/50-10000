@@ -275,6 +275,12 @@ async def run_live(cfg: BotConfig) -> None:
 
     # Slow-path timing: run klines + signals + allocation only after a new
     # candle has closed.  The period equals the default kline interval.
+    if cfg.kline_type not in _KLINE_PERIOD_SECONDS:
+        logger.warning(
+            "Unknown KLINE_TYPE %r, falling back to 15min (900s). Valid: %s",
+            cfg.kline_type,
+            ", ".join(sorted(_KLINE_PERIOD_SECONDS)),
+        )
     slow_period = _KLINE_PERIOD_SECONDS.get(cfg.kline_type, 900)
     last_slow_ts: float = 0.0  # force immediate first slow run
     slow_cycle = 0
