@@ -131,7 +131,9 @@ All configuration is via environment variables (see `.env.example`).
 | `MAX_TOTAL_EXPOSURE_PCT` | `80.0` | Max portfolio exposure % |
 | `MAX_LEVERAGE` | `3.0` | Max allowed leverage |
 | `MAX_PER_POSITION_RISK_PCT` | `2.0` | Max risk per position % |
-| `MIN_EV_BPS` | `10.0` | Min expected value above round-trip cost (basis points) |
+| `MIN_EV_BPS` | `15.0` | Min expected value above round-trip cost (basis points) |
+| `COOLDOWN_BARS` | `3` | Minimum candles between entries per symbol |
+| `KLINE_TYPE` | `15min` | Candle interval for signals (`1min`, `5min`, `15min`, `1hour`, etc.) |
 | `DB_TYPE` | `sqlite` | `sqlite` or `postgres` |
 
 ### Short Trading Variables
@@ -143,7 +145,7 @@ All configuration is via environment variables (see `.env.example`).
 | `REQUIRE_FUTURES_FOR_SHORT` | `true` | Block shorts on spot-only instruments |
 | `FUNDING_RATE_PER_8H` | `0.0001` | Expected funding rate per 8h period (0.01%) |
 | `BORROW_RATE_PER_HOUR` | `0.00003` | Margin borrow interest per hour (0.003%) |
-| `EXPECTED_HOLDING_HOURS` | `24.0` | Expected holding period used in EV gate |
+| `EXPECTED_HOLDING_HOURS` | `4.0` | Expected holding period used in EV gate |
 
 ## Security Guidance
 

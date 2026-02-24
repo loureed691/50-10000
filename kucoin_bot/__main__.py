@@ -275,7 +275,7 @@ async def run_live(cfg: BotConfig) -> None:
 
     # Slow-path timing: run klines + signals + allocation only after a new
     # candle has closed.  The period equals the default kline interval.
-    slow_period = _KLINE_PERIOD_SECONDS.get("1hour", 3600)
+    slow_period = _KLINE_PERIOD_SECONDS.get(cfg.kline_type, 900)
     last_slow_ts: float = 0.0  # force immediate first slow run
     slow_cycle = 0
 
@@ -399,7 +399,7 @@ async def run_live(cfg: BotConfig) -> None:
                 all_signals: dict[str, SignalScores] = {}
                 for sym in symbols_to_process:
                     try:
-                        klines = await market_data.get_klines(sym)
+                        klines = await market_data.get_klines(sym, kline_type=cfg.kline_type)
                         if len(klines) < signal_engine.lookback:
                             continue
                         all_signals[sym] = signal_engine.compute(sym, klines)
