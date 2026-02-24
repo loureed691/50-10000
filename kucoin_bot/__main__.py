@@ -39,6 +39,9 @@ logger = logging.getLogger(__name__)
 # Cancel open orders older than this threshold during periodic reconciliation.
 _ORDER_STALE_SECONDS = 600  # 10 minutes
 
+# Order statuses that represent confirmed fills (safe for position updates).
+_CONFIRMED_FILL_STATUSES = {"filled", "partially_filled"}
+
 DISCLAIMER = """
 ╔══════════════════════════════════════════════════════════════╗
 ║  WARNING: This bot can trade with real money and leverage.  ║
@@ -713,7 +716,7 @@ async def run_live(cfg: BotConfig) -> None:
                                         ),
                                         market,
                                     )
-                                    if result.success and result.filled_qty > 0 and result.status in ("filled", "partially_filled"):
+                                    if result.success and result.filled_qty > 0 and result.status in _CONFIRMED_FILL_STATUSES:
                                         pos_side = "long" if "long" in decision.action else "short"
                                         acct = "futures" if mkt_type_entry == "futures" else "trade"
                                         cm = market.contract_multiplier if market and market.contract_multiplier > 0 else 1.0
@@ -781,7 +784,7 @@ async def run_live(cfg: BotConfig) -> None:
                                         ),
                                         market,
                                     )
-                                    if result.success and result.status in ("filled", "partially_filled"):
+                                    if result.success and result.status in _CONFIRMED_FILL_STATUSES:
                                         pnl = (result.avg_price - pos.entry_price) * pos.size * exit_cm
                                         if pos.side == "short":
                                             pnl = -pnl
