@@ -14,6 +14,7 @@ from kucoin_bot.api.client import KuCoinClient
 from kucoin_bot.backtest.engine import DEFAULT_SLIPPAGE_BPS, DEFAULT_TAKER_FEE, BacktestEngine
 from kucoin_bot.config import BotConfig, load_config
 from kucoin_bot.reporting.cli import print_dashboard
+from kucoin_bot.reporting.metrics import METRICS
 from kucoin_bot.services.cost_model import CostModel
 from kucoin_bot.services.execution import ExecutionEngine, OrderRequest, OrderResult
 from kucoin_bot.services.market_data import _KLINE_PERIOD_SECONDS, MarketDataService
@@ -192,6 +193,8 @@ async def _reconcile_positions(
 async def run_live(cfg: BotConfig) -> None:
     """Main live trading loop (also handles PAPER and SHADOW modes)."""
     from kucoin_bot.models import SignalSnapshot, init_db  # requires sqlalchemy
+    from kucoin_bot.reporting.http_server import set_healthy, start_metrics_server
+    from kucoin_bot.reporting.retention import purge_old_snapshots
 
     print(DISCLAIMER)
 
@@ -217,6 +220,10 @@ async def run_live(cfg: BotConfig) -> None:
     db_session_factory = init_db(cfg.db_url)
     client = KuCoinClient(cfg.api_key, cfg.api_secret, cfg.api_passphrase, cfg.rest_url, cfg.futures_rest_url)
     await client.start()
+
+    # Start observability HTTP server (/healthz, /metrics)
+    metrics_runner = await start_metrics_server()
+    METRICS.set("bot_info", 1, labels={"mode": mode_label})
 
     market_data = MarketDataService(client=client)
     signal_engine = SignalEngine()
@@ -388,6 +395,7 @@ async def run_live(cfg: BotConfig) -> None:
             # ── Slow path (candle boundary) ────────────────────────
             run_slow = last_slow_ts == 0.0 or now >= last_slow_ts + slow_period
             if run_slow:
+                slow_start = time.time()
                 last_slow_ts = now
                 slow_cycle += 1
 
@@ -842,6 +850,23 @@ async def run_live(cfg: BotConfig) -> None:
                     except Exception:
                         logger.exception("Failed to write signal snapshots to DB")
 
+                # Slow-cycle duration metric
+                METRICS.observe("slow_cycle_duration_seconds", time.time() - slow_start)
+
+                # Periodic DB retention (once every ~100 slow cycles)
+                if slow_cycle % 100 == 0:
+                    purge_old_snapshots(db_session_factory)
+
+            # Update health probe and equity/exposure gauges each fast cycle
+            set_healthy(not risk_mgr.circuit_breaker_active)
+            METRICS.set("equity_usdt", risk_mgr.current_equity)
+            METRICS.set("daily_pnl_usdt", risk_mgr.daily_pnl)
+            METRICS.set("circuit_breaker_active", 1.0 if risk_mgr.circuit_breaker_active else 0.0)
+            total_exposure = sum(
+                risk_mgr.position_notional(p) for p in risk_mgr.positions.values()
+            )
+            METRICS.set("total_exposure_usdt", total_exposure)
+
             # Dashboard
             if cycle % dashboard_interval == 0:
                 print_dashboard(risk_mgr, active_strategies)
@@ -855,6 +880,7 @@ async def run_live(cfg: BotConfig) -> None:
 
     # Cleanup
     logger.info("Shutting down...")
+    await metrics_runner.cleanup()
     await client.close()
 
 

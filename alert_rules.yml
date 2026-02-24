@@ -1,11 +1,27 @@
-# Example Prometheus alerting rules for the KuCoin trading bot.
+# Prometheus alerting rules for the KuCoin trading bot.
 #
 # Load these into Prometheus/Alertmanager alongside a scrape config that
 # hits the bot's metrics endpoint (default: http://bot:9090/metrics).
+#
+# SLIs & SLOs
+# ───────────────────────────────────────────────────────────────
+# SLI 1 – Order success rate:  filled orders / total orders ≥ 95 %
+# SLI 2 – Slow-cycle latency:  p99 < 2× candle period
+# SLI 3 – Health endpoint availability:  up{job="bot"} ≥ 99.5 %
+# SLI 4 – API error rate:  rate(api_errors_total[5m]) < 0.05
+# SLI 5 – Circuit breaker activations:  < 2 per day
+#
+# SLO targets (30-day rolling):
+#   Order success rate ≥ 95 %
+#   Slow-cycle p99 ≤ 60 s (for 15min candles)
+#   /healthz availability ≥ 99.5 %
+#   API 429 rate < 5 % of total requests
+#   Circuit breaker activations ≤ 2/day
 
 groups:
   - name: kucoin_bot_alerts
     rules:
+      # ── Safety ──────────────────────────────────────────────
       - alert: CircuitBreakerActive
         expr: circuit_breaker_active == 1
         for: 1m
@@ -15,6 +31,15 @@ groups:
           summary: "Circuit breaker is active – all trading halted"
           description: "The bot's circuit breaker has been active for >1 min."
 
+      - alert: KillSwitchEngaged
+        expr: absent(up{job="kucoin-bot"}) or up{job="kucoin-bot"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Bot process is down (kill switch or crash)"
+
+      # ── Financial ───────────────────────────────────────────
       - alert: HighDailyLoss
         expr: daily_pnl_usdt < -200
         for: 5m
@@ -23,8 +48,17 @@ groups:
         annotations:
           summary: "Daily PnL exceeds -$200"
 
+      - alert: ExcessiveExposure
+        expr: total_exposure_usdt / equity_usdt > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Total exposure exceeds 80 % of equity"
+
+      # ── Latency / Reliability ───────────────────────────────
       - alert: OrderPollTimeouts
-        expr: rate(orders_placed_total{status="poll_timeout"}[10m]) > 0
+        expr: rate(poll_timeouts_total[10m]) > 0
         for: 5m
         labels:
           severity: warning
@@ -38,3 +72,28 @@ groups:
           severity: warning
         annotations:
           summary: "Average order latency exceeds 5 seconds"
+
+      - alert: SlowCycleTooLong
+        expr: slow_cycle_duration_seconds_sum / slow_cycle_duration_seconds_count > 60
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Average slow cycle exceeds 60 seconds"
+
+      # ── API ─────────────────────────────────────────────────
+      - alert: HighAPI429Rate
+        expr: rate(api_429_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KuCoin API rate-limiting (429) detected"
+
+      - alert: HealthEndpointDown
+        expr: probe_success{job="kucoin-bot-healthz"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "/healthz endpoint is not reachable"
