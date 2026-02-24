@@ -55,7 +55,8 @@ kucoin_bot/
 ├── backtest/
 │   └── engine.py            # Walk-forward backtester; per-side stats, cost breakdown
 └── reporting/
-    └── cli.py               # CLI dashboard & performance export
+    ├── cli.py               # CLI dashboard & performance export
+    └── metrics.py           # Prometheus-style metrics (counters, gauges, histograms)
 ```
 
 ## Quick Start
@@ -194,3 +195,95 @@ mypy kucoin_bot/ --ignore-missing-imports
 - Leverage trading carries significant risk of loss
 - Past performance (including backtests) does not guarantee future results
 - Users are responsible for compliance with local regulations
+
+## Operational Runbook
+
+### Stop-Loss Strategy
+
+The bot uses a **software-based stop-loss** checked on every fast-loop iteration:
+
+1. **Fast-loop price check**: Every `FAST_INTERVAL` seconds (default 30s), the bot evaluates all open positions against their `stop_price`.
+2. **Flatten on trigger**: When price crosses the stop level, `flatten_position()` places a market order with `reduceOnly=True` for futures.
+3. **Exchange-side stops (recommended for production)**: For latency-sensitive setups, place native stop-market orders on KuCoin using:
+   - Futures: `POST /api/v1/st-orders` with `reduceOnly=true`, `stop="down"` (long) or `stop="up"` (short), `stopPriceType="TP"`.
+   - Monitor stop order status via `GET /api/v1/st-orders` and reconcile in the slow loop.
+
+### Kill Switch
+
+Set `KILL_SWITCH=true` in the environment (or `.env`). The bot will:
+1. Cancel all open orders (spot + futures) via `cancel_all()`.
+2. Flatten all tracked positions using market orders with:
+   - Full `MarketInfo` context (price increment, lot size, contract multiplier).
+   - `reduceOnly=True` for all futures positions.
+3. Exit the trading loop.
+
+### Open-Order Reconciliation
+
+Every slow-loop cycle (candle boundary), the bot:
+1. Fetches all open spot and futures orders from the exchange.
+2. Cancels any order older than 10 minutes (configurable via `_ORDER_STALE_SECONDS`).
+3. Logs all reconciliation actions for audit.
+
+### Metrics & Monitoring
+
+The bot emits metrics via the `kucoin_bot.reporting.metrics.METRICS` singleton:
+
+```python
+from kucoin_bot.reporting.metrics import METRICS
+
+# Export as JSON
+print(METRICS.to_json())
+
+# Export as Prometheus text format
+print(METRICS.to_prometheus())
+```
+
+Key metrics:
+- `orders_placed_total` – counter by symbol/side/status
+- `order_latency_seconds` – histogram of order round-trip times
+- `equity_usdt`, `daily_pnl_usdt`, `drawdown_pct` – gauges
+- `circuit_breaker_active` – 0/1 gauge
+- `open_positions`, `total_exposure_usdt` – gauges
+
+Example Prometheus alert rules are in `alert_rules.yml`.
+
+### Docker Production Deployment
+
+```bash
+# Set secrets in .env (never commit .env to Git!)
+cp .env.example .env
+# Edit .env: set POSTGRES_PASSWORD, API credentials, BOT_MODE, etc.
+
+# Start with production profile (Postgres + Redis)
+docker-compose --profile production up --build -d
+
+# Check health
+docker-compose ps
+```
+
+All services have health checks. Postgres password is read from `POSTGRES_PASSWORD` env var (required, no default).
+
+## Validation Checklist
+
+### PAPER Smoke Test
+- [ ] Set `BOT_MODE=PAPER` and run for at least 2 slow cycles
+- [ ] Verify signal computation logs appear (`[PAPER] Simulated ...`)
+- [ ] Verify no real orders are placed (check KuCoin order history)
+- [ ] Verify circuit breaker triggers on simulated losses
+- [ ] Verify EV gate blocks marginal trades in logs
+
+### SHADOW Mode
+- [ ] Set `BOT_MODE=SHADOW` and run for 1+ hours
+- [ ] Verify `[SHADOW] Would ...` logs appear for entry/exit decisions
+- [ ] Verify no orders are placed and no positions are opened
+- [ ] Check risk summary output at dashboard intervals
+
+### LIVE Gate
+- [ ] Confirm `LIVE_TRADING=true` is required alongside `BOT_MODE=LIVE`
+- [ ] Verify startup reconciliation loads existing positions
+- [ ] Verify `reduceOnly=True` is set on all futures exits
+- [ ] Verify kill switch flattens all positions with market context
+- [ ] Verify poll timeout does NOT mark orders as filled
+- [ ] Verify open-order reconciliation cancels stale orders
+- [ ] Monitor metrics export: equity, PnL, exposure, latency
+- [ ] Confirm no hardcoded passwords in docker-compose or code

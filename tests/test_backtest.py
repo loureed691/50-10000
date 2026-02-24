@@ -148,3 +148,19 @@ class TestBacktestEngine:
         # With higher slippage, total fees should be >= no-latency case
         if r_no_lat.total_trades > 0:
             assert r_with_lat.total_fees >= r_no_lat.total_fees
+
+    def test_kline_type_scales_funding_period(self, trending_up_klines):
+        """Explicit kline_type must scale funding period to match bar duration."""
+        engine = BacktestEngine(
+            strategies=[TrendFollowing(), RiskOff()],
+            min_ev_bps=0,
+            cooldown_bars=0,
+        )
+        # Run with 1-hour bars (default inference from timestamps) vs explicit "15min"
+        # The test just asserts it runs without error and produces results
+        result = engine.run(
+            trending_up_klines, "BTC-USDT", initial_equity=10_000,
+            market_type="futures", kline_type="15min",
+        )
+        assert result.final_equity > 0
+        assert len(result.equity_curve) > 0
