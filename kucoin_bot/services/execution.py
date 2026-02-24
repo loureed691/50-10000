@@ -73,6 +73,23 @@ class ExecutionEngine:
     max_retries: int = 3
     poll_fills: bool = True  # whether to poll order status after placement
     _margin_mode_ready: Set[str] = field(default_factory=set, repr=False)
+    _position_mode_ready: bool = field(default=False, repr=False)
+
+    async def _ensure_position_mode(self) -> None:
+        """Ensure the futures account is set to One-Way position mode.
+
+        Only calls the API once per engine lifetime.  Failures are logged but
+        do **not** prevent order placement (the order may still succeed if the
+        mode already matches).
+        """
+        if self._position_mode_ready:
+            return
+        try:
+            await self.client.change_position_mode(one_way=True)
+            logger.info("Position mode set to One-Way")
+        except Exception:
+            logger.debug("Failed to switch position mode, order will proceed anyway", exc_info=True)
+        self._position_mode_ready = True
 
     async def _ensure_margin_mode(self, symbol: str) -> None:
         """Ensure the futures symbol is set to ISOLATED margin mode.
@@ -144,6 +161,7 @@ class ExecutionEngine:
             try:
                 # Route futures orders through the dedicated futures endpoint
                 if is_futures:
+                    await self._ensure_position_mode()
                     await self._ensure_margin_mode(req.symbol)
                     result = await self.client.place_futures_order(
                         symbol=req.symbol,

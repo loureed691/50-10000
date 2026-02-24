@@ -416,6 +416,17 @@ class KuCoinClient:
             "POST", "/api/v2/position/changeMarginMode", body=body, base_url=self._futures_rest_url
         )
 
+    async def change_position_mode(self, one_way: bool = True) -> dict:
+        """Switch between One-Way Mode and Hedge Mode for the futures account.
+
+        ``one_way=True``  → One-Way Mode (``positionMode`` = ``"0"``)
+        ``one_way=False`` → Hedge Mode   (``positionMode`` = ``"1"``)
+        """
+        body = {"positionMode": "0" if one_way else "1"}
+        return await self._request(
+            "POST", "/api/v2/position/switchPositionMode", body=body, base_url=self._futures_rest_url
+        )
+
     async def place_futures_order(
         self,
         symbol: str,
