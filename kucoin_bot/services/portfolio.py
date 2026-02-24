@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -13,7 +14,8 @@ from kucoin_bot.services.signal_engine import Regime, SignalScores
 
 logger = logging.getLogger(__name__)
 
-# Allowed transfer routes
+# Allowed transfer routes (user-facing names; "futures" is normalised to
+# "contract" inside KuCoinClient.inner_transfer before hitting the API).
 _ALLOWED_TRANSFERS = {
     ("main", "trade"),
     ("trade", "main"),
@@ -144,6 +146,18 @@ class PortfolioManager:
                 amount=amount,
                 client_oid=idempotency_key,
             )
+
+            # KuCoin may return HTTP 200 with a non-success code in the body.
+            result_code = str(result.get("code", ""))
+            if result_code != "200000":
+                logger.error(
+                    "Transfer rejected by KuCoin: code=%s msg=%s payload=%s",
+                    result_code,
+                    result.get("msg", ""),
+                    {"from": from_account, "to": to_account, "currency": currency, "amount": amount},
+                )
+                return None
+
             self._transfer_log.append(
                 {
                     "key": idempotency_key,
@@ -185,3 +199,29 @@ class PortfolioManager:
         except Exception:
             logger.error("Transfer failed", exc_info=True)
             return None
+
+    async def wait_for_futures_balance(
+        self,
+        currency: str,
+        min_available: float,
+        timeout: float = 10.0,
+        poll_interval: float = 1.0,
+    ) -> bool:
+        """Poll the futures account until *min_available* is reached or *timeout* expires."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                overview = await self.client.get_futures_account_overview(currency=currency)
+                available = float(overview.get("availableBalance", 0))
+                if available >= min_available:
+                    return True
+            except Exception:
+                logger.debug("Polling futures balance failed, retrying", exc_info=True)
+            await asyncio.sleep(poll_interval)
+        logger.warning(
+            "Futures balance did not reach %.4f %s within %.0fs",
+            min_available,
+            currency,
+            timeout,
+        )
+        return False
