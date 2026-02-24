@@ -848,6 +848,24 @@ class TestTransferForFutures:
         assert call_kwargs["amount"] == 500
 
     @pytest.mark.asyncio
+    async def test_transfer_truncates_amount_to_8_decimals(self):
+        """transfer_if_needed must truncate amount to 8 decimal places."""
+        client = MagicMock(spec=KuCoinClient)
+        client.inner_transfer = AsyncMock(
+            return_value={"code": "200000", "data": {"orderId": "xfer-trunc"}},
+        )
+        risk_mgr = RiskManager(config=RiskConfig())
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr, allow_transfers=True)
+
+        result = await pm.transfer_if_needed(
+            "USDT", "trade", "futures", 10.040051135337299
+        )
+        assert result is not None
+        call_kwargs = client.inner_transfer.call_args.kwargs
+        # Must be truncated (floored) to 8 decimal places
+        assert call_kwargs["amount"] == 10.04005113
+
+    @pytest.mark.asyncio
     async def test_transfer_trade_to_futures_allowed(self):
         """trade → futures is a valid transfer route."""
         client = MagicMock(spec=KuCoinClient)

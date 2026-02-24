@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -136,6 +137,10 @@ class PortfolioManager:
 
         if amount <= 0:
             return None
+
+        # KuCoin transfer precision is 0.00000001 (8 decimal places).
+        # Truncate (floor) to avoid exceeding available balance.
+        amount = math.floor(amount * 1e8) / 1e8
 
         idempotency_key = str(uuid.uuid4())
         try:
