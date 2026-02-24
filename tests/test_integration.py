@@ -880,7 +880,69 @@ class TestTransferForFutures:
         assert result is None
 
 
-class TestFuturesSizingEndToEnd:
+class TestTransferAccountNormalization:
+    """Verify that 'futures' is normalized to 'contract' in API calls."""
+
+    def test_normalize_account_type_futures(self):
+        """'futures' must be normalized to 'contract'."""
+        assert KuCoinClient.normalize_account_type("futures") == "contract"
+
+    def test_normalize_account_type_passthrough(self):
+        """Other account types must pass through unchanged."""
+        assert KuCoinClient.normalize_account_type("trade") == "trade"
+        assert KuCoinClient.normalize_account_type("main") == "main"
+
+    @pytest.mark.asyncio
+    async def test_transfer_returns_none_on_error_code(self):
+        """transfer_if_needed must return None when KuCoin returns non-200000 code."""
+        client = MagicMock(spec=KuCoinClient)
+        client.inner_transfer = AsyncMock(
+            return_value={"code": "900001", "msg": "Invalid account type"}
+        )
+        risk_mgr = RiskManager(config=RiskConfig())
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr, allow_transfers=True)
+
+        result = await pm.transfer_if_needed("USDT", "trade", "futures", 100)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_transfer_success_only_on_200000(self):
+        """transfer_if_needed must return an idempotency key only when code == '200000'."""
+        client = MagicMock(spec=KuCoinClient)
+        client.inner_transfer = AsyncMock(
+            return_value={"code": "200000", "data": {"orderId": "ok-1"}}
+        )
+        risk_mgr = RiskManager(config=RiskConfig())
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr, allow_transfers=True)
+
+        result = await pm.transfer_if_needed("USDT", "trade", "futures", 50)
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_wait_for_futures_balance_success(self):
+        """Polling must return True once availableBalance meets the threshold."""
+        client = MagicMock(spec=KuCoinClient)
+        client.get_futures_account_overview = AsyncMock(
+            return_value={"availableBalance": "100.5"}
+        )
+        risk_mgr = RiskManager(config=RiskConfig())
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr)
+
+        ok = await pm.wait_for_futures_balance("USDT", 50.0, timeout=2.0, poll_interval=0.1)
+        assert ok is True
+
+    @pytest.mark.asyncio
+    async def test_wait_for_futures_balance_timeout(self):
+        """Polling must return False when balance never reaches the threshold."""
+        client = MagicMock(spec=KuCoinClient)
+        client.get_futures_account_overview = AsyncMock(
+            return_value={"availableBalance": "1.0"}
+        )
+        risk_mgr = RiskManager(config=RiskConfig())
+        pm = PortfolioManager(client=client, risk_mgr=risk_mgr)
+
+        ok = await pm.wait_for_futures_balance("USDT", 999.0, timeout=0.3, poll_interval=0.1)
+        assert ok is False
     """Regression: allocation + position sizing must produce usable futures notional."""
 
     def test_small_account_trade_notional_is_usable(self):

@@ -340,6 +340,16 @@ class KuCoinClient:
     # Internal transfer
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def normalize_account_type(account: str) -> str:
+        """Normalize user-facing account names to KuCoin API values.
+
+        The KuCoin inner-transfer endpoint uses ``"contract"`` for the futures
+        account, not ``"futures"``.
+        """
+        _ACCOUNT_ALIASES: Dict[str, str] = {"futures": "contract"}
+        return _ACCOUNT_ALIASES.get(account, account)
+
     async def inner_transfer(
         self,
         currency: str,
@@ -348,11 +358,13 @@ class KuCoinClient:
         amount: float,
         client_oid: Optional[str] = None,
     ) -> dict:
+        api_from = self.normalize_account_type(from_account)
+        api_to = self.normalize_account_type(to_account)
         body = {
             "clientOid": client_oid or str(uuid.uuid4()),
             "currency": currency,
-            "from": from_account,
-            "to": to_account,
+            "from": api_from,
+            "to": api_to,
             "amount": str(amount),
         }
         return await self._request("POST", "/api/v2/accounts/inner-transfer", body=body)
@@ -360,6 +372,16 @@ class KuCoinClient:
     # ------------------------------------------------------------------
     # Futures endpoints
     # ------------------------------------------------------------------
+
+    async def get_futures_account_overview(self, currency: str = "USDT") -> dict:
+        """GET /api/v1/account-overview on the futures base URL."""
+        resp = await self._request(
+            "GET",
+            "/api/v1/account-overview",
+            params={"currency": currency},
+            base_url=self._futures_rest_url,
+        )
+        return dict(resp.get("data", {}))
 
     async def get_futures_contracts(self) -> List[dict]:
         resp = await self._request("GET", "/api/v1/contracts/active", signed=False, base_url=self._futures_rest_url)
