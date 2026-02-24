@@ -382,3 +382,93 @@ class TestExecutionEngine:
 
         assert result.success
         client.place_futures_order.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_poll_timeout_returns_failure(self) -> None:
+        """A poll timeout must NOT be reported as success (safety-critical)."""
+        engine, client = self._make_engine(poll_fills=True)
+        client.place_futures_order.return_value = {"code": "200000", "data": {"orderId": "fut-timeout"}}
+        # Simulate always-active order (never fills)
+        client.get_futures_order.return_value = {
+            "isActive": True,
+            "dealSize": 0,
+            "dealFunds": 0,
+            "cancelExist": False,
+        }
+
+        market = MarketInfo(
+            symbol="XBTUSDTM",
+            base="BTC",
+            quote="USDT",
+            base_min_size=1.0,
+            price_increment=0.1,
+            last_price=50000.0,
+            market_type="futures",
+            contract_multiplier=0.001,
+            lot_size=1,
+        )
+        # Reduce timeout for test speed
+        import kucoin_bot.services.execution as exec_mod
+        original_timeout = exec_mod._ORDER_POLL_TIMEOUT
+        original_interval = exec_mod._ORDER_POLL_INTERVAL
+        exec_mod._ORDER_POLL_TIMEOUT = 0.1
+        exec_mod._ORDER_POLL_INTERVAL = 0.05
+        try:
+            req = OrderRequest(symbol="XBTUSDTM", side="buy", notional=500.0, order_type="market")
+            result = await engine.execute(req, market)
+        finally:
+            exec_mod._ORDER_POLL_TIMEOUT = original_timeout
+            exec_mod._ORDER_POLL_INTERVAL = original_interval
+
+        assert not result.success, "Poll timeout must return success=False"
+        assert result.status == "pending"
+        assert result.message == "poll_timeout"
+
+    @pytest.mark.asyncio
+    async def test_flatten_position_uses_contract_multiplier(self) -> None:
+        """flatten_position must compute notional = size * multiplier * price for futures."""
+        engine, client = self._make_engine()
+        client.place_futures_order.return_value = {"code": "200000", "data": {"orderId": "flat-cm"}}
+        market = MarketInfo(
+            symbol="XBTUSDTM",
+            base="BTC",
+            quote="USDT",
+            base_min_size=1.0,
+            price_increment=0.1,
+            last_price=50000.0,
+            market_type="futures",
+            contract_multiplier=0.001,
+            lot_size=1,
+        )
+        # 10 contracts * 0.001 multiplier * 50000 price = 500 USDT notional
+        result = await engine.flatten_position(
+            "XBTUSDTM", 10.0, 50000.0, "long", market, contract_multiplier=0.001,
+        )
+        assert result.success
+        call_args = client.place_futures_order.call_args
+        assert call_args.kwargs["reduce_only"] is True
+
+    @pytest.mark.asyncio
+    async def test_flatten_futures_sets_reduce_only_with_market_context(self) -> None:
+        """Kill-switch scenario: flatten with market context must set reduce_only for futures."""
+        engine, client = self._make_engine()
+        client.place_futures_order.return_value = {"code": "200000", "data": {"orderId": "ks-flat"}}
+        market = MarketInfo(
+            symbol="XBTUSDTM",
+            base="BTC",
+            quote="USDT",
+            base_min_size=1.0,
+            price_increment=0.1,
+            last_price=50000.0,
+            market_type="futures",
+            contract_multiplier=0.001,
+            lot_size=1,
+        )
+        result = await engine.flatten_position(
+            "XBTUSDTM", 100.0, 50000.0, "long", market, contract_multiplier=0.001,
+        )
+        assert result.success
+        call_args = client.place_futures_order.call_args
+        assert call_args.kwargs["reduce_only"] is True, (
+            "Futures flatten in kill-switch must use reduce_only"
+        )

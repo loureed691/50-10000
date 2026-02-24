@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 # Profitability is NOT guaranteed. Leverage amplifies losses.
 # The authors are not responsible for any financial losses.
 
+# Cancel open orders older than this threshold during periodic reconciliation.
+_ORDER_STALE_SECONDS = 600  # 10 minutes
+
 DISCLAIMER = """
 ╔══════════════════════════════════════════════════════════════╗
 ║  WARNING: This bot can trade with real money and leverage.  ║
@@ -128,6 +131,7 @@ async def _reconcile_positions(
                 leverage = float(pos.get("realLeverage", 1) or 1)
                 side = "long" if qty > 0 else "short"
                 unrealized = float(pos.get("unrealisedPnl", 0) or 0)
+                multiplier = float(pos.get("multiplier", 1) or 1)
                 risk_mgr.update_position(
                     sym,
                     PositionInfo(
@@ -139,6 +143,7 @@ async def _reconcile_positions(
                         leverage=leverage,
                         account_type="futures",
                         unrealized_pnl=unrealized,
+                        contract_multiplier=abs(multiplier) if multiplier != 0 else 1.0,
                     ),
                 )
                 log.info(
@@ -315,11 +320,14 @@ async def run_live(cfg: BotConfig) -> None:
                         continue
                     try:
                         if not is_shadow and not is_paper:
+                            kill_market = market_data.get_info(sym)
                             await exec_engine.flatten_position(
                                 sym,
                                 kill_pos.size,
                                 close_price,
                                 kill_pos.side,
+                                kill_market,
+                                contract_multiplier=kill_pos.contract_multiplier,
                             )
                         risk_mgr.update_position(sym, PositionInfo(symbol=sym, side=kill_pos.side, size=0))
                     except Exception:
@@ -389,6 +397,38 @@ async def run_live(cfg: BotConfig) -> None:
                     total_equity = await _compute_total_equity(client, market_data)
                     if total_equity > 0:
                         risk_mgr.update_equity(total_equity)
+
+                    # Open-order reconciliation: check for stale orders every slow cycle
+                    try:
+                        for oo in await client.get_open_orders() or []:
+                            oid = oo.get("id", "")
+                            created = float(oo.get("createdAt", 0) or 0) / 1000.0
+                            if created > 0 and now - created > _ORDER_STALE_SECONDS:
+                                logger.warning(
+                                    "Cancelling stale spot order %s (%s %s) age=%.0fs",
+                                    oid, oo.get("side", "?"), oo.get("symbol", "?"), now - created,
+                                )
+                                try:
+                                    await client.cancel_order(oid)
+                                except Exception:
+                                    logger.error("Failed to cancel stale spot order %s", oid, exc_info=True)
+                    except Exception:
+                        logger.debug("Open-order reconciliation (spot) failed", exc_info=True)
+                    try:
+                        for fo in await client.get_futures_open_orders() or []:
+                            oid = fo.get("id", "")
+                            created = float(fo.get("createdAt", 0) or 0) / 1000.0
+                            if created > 0 and now - created > _ORDER_STALE_SECONDS:
+                                logger.warning(
+                                    "Cancelling stale futures order %s (%s %s) age=%.0fs",
+                                    oid, fo.get("side", "?"), fo.get("symbol", "?"), now - created,
+                                )
+                                try:
+                                    await client.cancel_futures_order(oid)
+                                except Exception:
+                                    logger.error("Failed to cancel stale futures order %s", oid, exc_info=True)
+                    except Exception:
+                        logger.debug("Open-order reconciliation (futures) failed", exc_info=True)
 
                 # Process each pair
                 # Build the symbol list: universe symbols (optionally capped) plus
@@ -527,8 +567,12 @@ async def run_live(cfg: BotConfig) -> None:
                             is_futures = mkt_type == "futures"
                             proposed_side_ev = "long" if "long" in decision.action else "short"
                             is_margin_short = mkt_type == "margin" and proposed_side_ev == "short"
+                            ev_order_type = (
+                                "maker" if getattr(decision, "post_only", False)
+                                else "taker"
+                            )
                             costs = cost_model.estimate(
-                                order_type="taker",
+                                order_type=ev_order_type,
                                 holding_hours=cfg.short.expected_holding_hours,
                                 is_futures=is_futures,
                                 is_margin_short=is_margin_short,
@@ -669,9 +713,10 @@ async def run_live(cfg: BotConfig) -> None:
                                         ),
                                         market,
                                     )
-                                    if result.success and result.filled_qty > 0:
+                                    if result.success and result.filled_qty > 0 and result.status in ("filled", "partially_filled"):
                                         pos_side = "long" if "long" in decision.action else "short"
                                         acct = "futures" if mkt_type_entry == "futures" else "trade"
+                                        cm = market.contract_multiplier if market and market.contract_multiplier > 0 else 1.0
                                         risk_mgr.update_position(
                                             sym,
                                             PositionInfo(
@@ -683,6 +728,7 @@ async def run_live(cfg: BotConfig) -> None:
                                                 leverage=alloc.max_leverage,
                                                 account_type=acct,
                                                 stop_price=getattr(decision, "stop_price", None),
+                                                contract_multiplier=cm,
                                             ),
                                         )
                                         last_entry_slow[sym] = slow_cycle
@@ -722,22 +768,21 @@ async def run_live(cfg: BotConfig) -> None:
                                     strategy_monitor.record_trade(alloc.strategy, raw_pnl, paper_fee)
                                     logger.info("[PAPER] Simulated exit %s pnl=%.4f fee=%.4f", sym, pnl, paper_fee)
                                 else:
+                                    exit_cm = pos.contract_multiplier
+                                    exit_price = pos.current_price if pos.current_price > 0 else pos.entry_price
                                     result = await exec_engine.execute(
                                         OrderRequest(
                                             symbol=sym,
                                             side=side,
-                                            notional=abs(
-                                                pos.size
-                                                * (pos.current_price if pos.current_price > 0 else pos.entry_price)
-                                            ),
+                                            notional=abs(pos.size * exit_cm * exit_price),
                                             order_type=decision.order_type,
                                             reason=decision.reason,
                                             reduce_only=is_futures_exit,
                                         ),
                                         market,
                                     )
-                                    if result.success:
-                                        pnl = (result.avg_price - pos.entry_price) * pos.size
+                                    if result.success and result.status in ("filled", "partially_filled"):
+                                        pnl = (result.avg_price - pos.entry_price) * pos.size * exit_cm
                                         if pos.side == "short":
                                             pnl = -pnl
                                         risk_mgr.record_pnl(pnl)

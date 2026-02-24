@@ -29,6 +29,7 @@ class PositionInfo:
     account_type: str = "trade"  # trade / margin / futures
     unrealized_pnl: float = 0.0
     stop_price: Optional[float] = None
+    contract_multiplier: float = 1.0  # futures: value per contract in base asset
 
 
 @dataclass
@@ -42,6 +43,21 @@ class RiskManager:
     current_equity: float = 0.0
     circuit_breaker_active: bool = False
     _cb_triggered_at: float = 0.0
+
+    # ------------------------------------------------------------------
+    # Notional helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def position_notional(pos: PositionInfo) -> float:
+        """Return the USD notional value of a position.
+
+        For futures positions the notional is ``contracts * multiplier * price``
+        (the multiplier converts contracts to base-asset units).  For spot /
+        margin positions the multiplier is 1.0, so this reduces to
+        ``size * price``.
+        """
+        return abs(pos.size * pos.contract_multiplier * pos.current_price)
 
     # ------------------------------------------------------------------
     # Core checks
@@ -65,7 +81,7 @@ class RiskManager:
         """Returns True if total exposure exceeds limit."""
         if self.current_equity <= 0:
             return False
-        total = sum(abs(p.size * p.current_price) for p in self.positions.values())
+        total = sum(self.position_notional(p) for p in self.positions.values())
         exposure_pct = total / self.current_equity * 100
         return exposure_pct >= self.config.max_total_exposure_pct
 
@@ -92,7 +108,7 @@ class RiskManager:
         if self.current_equity <= 0:
             return False
         total = (
-            sum(abs(p.size * p.current_price) for sym, p in self.positions.items() if sym in symbols)
+            sum(self.position_notional(p) for sym, p in self.positions.items() if sym in symbols)
             + prospective_notional
         )
         exposure_pct = total / self.current_equity * 100
@@ -129,7 +145,7 @@ class RiskManager:
         notional = max_risk_usd
 
         # Ensure doesn't blow total exposure
-        existing_exposure = sum(abs(p.size * p.current_price) for p in self.positions.values())
+        existing_exposure = sum(self.position_notional(p) for p in self.positions.values())
         max_total = self.current_equity * (self.config.max_total_exposure_pct / 100)
         remaining = max(0, max_total - existing_exposure)
         # remaining is in exposure units; convert to margin by dividing by leverage
@@ -207,7 +223,7 @@ class RiskManager:
         return SideSelector()._squeeze_risk_high(signals)
 
     def get_risk_summary(self) -> dict:
-        total_exposure = sum(abs(p.size * p.current_price) for p in self.positions.values())
+        total_exposure = sum(self.position_notional(p) for p in self.positions.values())
         dd = 0.0
         if self.peak_equity > 0:
             dd = (self.peak_equity - self.current_equity) / self.peak_equity * 100

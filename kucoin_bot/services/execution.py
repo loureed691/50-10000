@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
@@ -187,14 +188,18 @@ class ExecutionEngine:
                     )
                 if result.get("code") == "200000":
                     oid = result.get("data", {}).get("orderId", "")
+                    t_placed = time.monotonic()
                     logger.info(
-                        "Order placed: %s %s %.6f %s @ %.4f (oid=%s, reason=%s)",
-                        req.side,
+                        "Order placed | order_id=%s client_oid=%s symbol=%s market_type=%s"
+                        " side=%s size=%.6f type=%s price=%.4f reason=%s",
+                        oid,
+                        client_oid,
                         req.symbol,
+                        "futures" if is_futures else "spot",
+                        req.side,
                         size,
                         order_type,
                         price,
-                        oid,
                         req.reason,
                     )
 
@@ -243,6 +248,10 @@ class ExecutionEngine:
                     if deal_size > 0:
                         avg_price = deal_funds / deal_size if deal_size > 0 else expected_price
                         status = "filled" if not cancel_exist else "partially_filled"
+                        logger.info(
+                            "Order confirmed | order_id=%s status=%s filled_qty=%.6f avg_price=%.4f latency=%.1fs",
+                            order_id, status, deal_size, avg_price, elapsed,
+                        )
                         return OrderResult(
                             success=True,
                             order_id=order_id,
@@ -251,6 +260,10 @@ class ExecutionEngine:
                             status=status,
                         )
                     else:
+                        logger.info(
+                            "Order confirmed | order_id=%s status=cancelled latency=%.1fs",
+                            order_id, elapsed,
+                        )
                         return OrderResult(
                             success=False,
                             order_id=order_id,
@@ -268,10 +281,10 @@ class ExecutionEngine:
             await asyncio.sleep(_ORDER_POLL_INTERVAL)
             elapsed += _ORDER_POLL_INTERVAL
 
-        # Timeout: return what we know
+        # Timeout: order is NOT confirmed filled – treat as pending/unconfirmed
         logger.warning("Order %s poll timeout after %.0fs", order_id, elapsed)
         return OrderResult(
-            success=True,
+            success=False,
             order_id=order_id,
             avg_price=expected_price,
             filled_qty=expected_qty,
@@ -311,11 +324,17 @@ class ExecutionEngine:
         return cancelled
 
     async def flatten_position(
-        self, symbol: str, current_size: float, current_price: float, side: str, market: Optional[MarketInfo] = None
+        self,
+        symbol: str,
+        current_size: float,
+        current_price: float,
+        side: str,
+        market: Optional[MarketInfo] = None,
+        contract_multiplier: float = 1.0,
     ) -> OrderResult:
         """Close a position by placing an opposite market order."""
         close_side = "sell" if side == "long" else "buy"
-        notional = abs(current_size * current_price)
+        notional = abs(current_size * contract_multiplier * current_price)
         is_futures = market.market_type == "futures" if market else False
         return await self.execute(
             OrderRequest(

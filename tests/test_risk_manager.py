@@ -171,3 +171,53 @@ class TestRiskManager:
         assert notional == pytest.approx(1.0, rel=0.01)
         # Critical: notional must be >= $1 so a futures transfer is meaningful
         assert notional >= 1.0
+
+    # ------------------------------------------------------------------
+    # contract_multiplier & position_notional tests
+    # ------------------------------------------------------------------
+
+    def test_position_notional_spot(self):
+        """Spot positions: notional = size * price (multiplier defaults to 1.0)."""
+        pos = PositionInfo(symbol="BTC-USDT", side="long", size=0.5, current_price=40_000)
+        assert RiskManager.position_notional(pos) == pytest.approx(20_000)
+
+    def test_position_notional_futures(self):
+        """Futures positions: notional = contracts * multiplier * price."""
+        pos = PositionInfo(
+            symbol="XBTUSDTM", side="long", size=100, current_price=50_000,
+            account_type="futures", contract_multiplier=0.001,
+        )
+        # 100 contracts * 0.001 BTC/contract * 50000 = 5000 USDT
+        assert RiskManager.position_notional(pos) == pytest.approx(5_000)
+
+    def test_total_exposure_uses_contract_multiplier(self):
+        rm = self._make_risk_mgr(10_000)
+        rm.positions["XBTUSDTM"] = PositionInfo(
+            symbol="XBTUSDTM", side="long", size=200, current_price=50_000,
+            account_type="futures", contract_multiplier=0.001,
+        )
+        # 200 * 0.001 * 50000 = 10000 => 100% exposure => True
+        assert rm.check_total_exposure() is True
+
+    def test_correlated_exposure_uses_contract_multiplier(self):
+        rm = self._make_risk_mgr(10_000)
+        rm.positions["XBTUSDTM"] = PositionInfo(
+            symbol="XBTUSDTM", side="long", size=60, current_price=50_000,
+            account_type="futures", contract_multiplier=0.001,
+        )
+        # 60 * 0.001 * 50000 = 3000 => 30% (at limit)
+        assert rm.check_correlated_exposure(["XBTUSDTM"]) is True
+
+    def test_risk_summary_uses_contract_multiplier(self):
+        rm = self._make_risk_mgr(10_000)
+        rm.positions["XBTUSDTM"] = PositionInfo(
+            symbol="XBTUSDTM", side="long", size=100, current_price=50_000,
+            account_type="futures", contract_multiplier=0.001,
+        )
+        summary = rm.get_risk_summary()
+        assert summary["total_exposure"] == pytest.approx(5_000)
+
+    def test_contract_multiplier_default_is_one(self):
+        """PositionInfo defaults contract_multiplier to 1.0 (backward compat)."""
+        pos = PositionInfo(symbol="BTC-USDT", side="long")
+        assert pos.contract_multiplier == 1.0
