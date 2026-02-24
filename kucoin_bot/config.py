@@ -78,7 +78,7 @@ class ShortConfig:
     # Margin borrow rate per hour (decimal, e.g. 0.00003 = 0.003 %/hr)
     borrow_rate_per_hour: float = 0.00003
     # Expected holding period used in the EV gate cost estimate (hours)
-    expected_holding_hours: float = 24.0
+    expected_holding_hours: float = 4.0
 
 
 @dataclass
@@ -92,9 +92,9 @@ class RiskConfig:
     max_per_position_risk_pct: float = 2.0
     max_correlated_exposure_pct: float = 30.0
     # EV gate: minimum expected-value buffer above round-trip costs (bps)
-    min_ev_bps: float = 5.0
+    min_ev_bps: float = 15.0
     # Minimum bars required between entry signals per symbol
-    cooldown_bars: int = 5
+    cooldown_bars: int = 3
 
 
 @dataclass
@@ -138,6 +138,11 @@ class BotConfig:
     # 0 means no limit (scan all eligible pairs).
     # Symbols with open positions are always included regardless of this cap.
     max_symbols: int = 0
+
+    # Kline interval used for the slow-path (signal + allocation) cadence.
+    # Must match a key in ``_KLINE_PERIOD_SECONDS`` (e.g. "5min", "15min",
+    # "1hour").  Shorter candles let the bot react faster to price moves.
+    kline_type: str = "15min"
 
     # Fast-path interval (seconds): how often the fast loop runs for
     # order-polling, stop checks, circuit-breaker evaluation, and
@@ -214,6 +219,7 @@ def load_config() -> BotConfig:
         db_url=os.getenv("DB_URL", "sqlite:///kucoin_bot.db"),
         redis_url=os.getenv("REDIS_URL") or None,
         max_symbols=_int_env("MAX_SYMBOLS", 0),
+        kline_type=os.getenv("KLINE_TYPE", "15min"),
         fast_interval=_int_env("FAST_INTERVAL", 30),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         risk=RiskConfig(
@@ -223,8 +229,8 @@ def load_config() -> BotConfig:
             max_leverage=_float_env("MAX_LEVERAGE", 3.0),
             max_per_position_risk_pct=_float_env("MAX_PER_POSITION_RISK_PCT", 2.0),
             max_correlated_exposure_pct=_float_env("MAX_CORRELATED_EXPOSURE_PCT", 30.0),
-            min_ev_bps=_float_env("MIN_EV_BPS", 5.0),
-            cooldown_bars=_int_env("COOLDOWN_BARS", 5),
+            min_ev_bps=_float_env("MIN_EV_BPS", 15.0),
+            cooldown_bars=_int_env("COOLDOWN_BARS", 3),
         ),
         short=ShortConfig(
             allow_shorts=_bool_env("ALLOW_SHORTS", "true"),
@@ -232,7 +238,7 @@ def load_config() -> BotConfig:
             require_futures_for_short=_bool_env("REQUIRE_FUTURES_FOR_SHORT", "true"),
             funding_rate_per_8h=_float_env("FUNDING_RATE_PER_8H", 0.0001),
             borrow_rate_per_hour=_float_env("BORROW_RATE_PER_HOUR", 0.00003),
-            expected_holding_hours=_float_env("EXPECTED_HOLDING_HOURS", 24.0),
+            expected_holding_hours=_float_env("EXPECTED_HOLDING_HOURS", 4.0),
         ),
     )
 

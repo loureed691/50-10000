@@ -41,8 +41,8 @@ class TestConfig:
         assert rc.max_drawdown_pct == 10.0
         assert rc.max_total_exposure_pct == 80.0
         assert rc.max_per_position_risk_pct == 2.0
-        assert rc.min_ev_bps == 5.0
-        assert rc.cooldown_bars == 5
+        assert rc.min_ev_bps == 15.0
+        assert rc.cooldown_bars == 3
 
     def test_blank_numeric_env_uses_default(self, monkeypatch):
         """Blank numeric env vars (e.g. MAX_LEVERAGE=) must fall back to defaults."""
@@ -51,7 +51,7 @@ class TestConfig:
         monkeypatch.setenv("FUNDING_RATE_PER_8H", "")
         cfg = load_config()
         assert cfg.risk.max_leverage == 3.0
-        assert cfg.risk.cooldown_bars == 5
+        assert cfg.risk.cooldown_bars == 3
         assert cfg.short.funding_rate_per_8h == 0.0001
 
     def test_invalid_numeric_env_uses_default(self, monkeypatch):
@@ -93,6 +93,15 @@ class TestConfig:
         monkeypatch.setenv("MAX_SYMBOLS", "30")
         cfg = load_config()
         assert cfg.max_symbols == 30
+
+    def test_kline_type_default(self):
+        cfg = BotConfig()
+        assert cfg.kline_type == "15min"
+
+    def test_kline_type_from_env(self, monkeypatch):
+        monkeypatch.setenv("KLINE_TYPE", "5min")
+        cfg = load_config()
+        assert cfg.kline_type == "5min"
 
     def test_live_mode_refused_without_live_trading(self, monkeypatch):
         """main() must exit(1) when BOT_MODE=LIVE but LIVE_TRADING!=true."""
