@@ -209,10 +209,25 @@ class MarketDataService:
         period = _KLINE_PERIOD_SECONDS.get(kline_type, 3600)
         data = await self.client.get_klines(symbol, kline_type, start=now_int - bars * period, end=now_int)
         # KuCoin returns klines in descending time order (newest first).
-        # The signal engine expects ascending order (oldest first), so sort
-        # by the timestamp field (index 0).
+        # The signal engine expects ascending order (oldest first).
+        # Use O(n) reverse when data is strictly newest-first; fallback to sort.
         if data and len(data) > 1:
-            data = sorted(data, key=lambda k: int(k[0]))
+            try:
+                first_ts = int(data[0][0])
+                last_ts = int(data[-1][0])
+                if first_ts > last_ts:
+                    # Check if monotonically decreasing (newest-first)
+                    is_descending = all(int(data[i][0]) >= int(data[i + 1][0]) for i in range(len(data) - 1))
+                    if is_descending:
+                        data = list(reversed(data))
+                    else:
+                        data = sorted(data, key=lambda k: int(k[0]))
+                elif first_ts == last_ts or not all(
+                    int(data[i][0]) <= int(data[i + 1][0]) for i in range(len(data) - 1)
+                ):
+                    data = sorted(data, key=lambda k: int(k[0]))
+            except Exception:
+                data = sorted(data, key=lambda k: int(k[0]))
         self._kline_cache[cache_key] = (data, now)
         return data
 
@@ -242,7 +257,21 @@ class MarketDataService:
                 o, h, l_, c, v = float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])
                 result.append([str(ts_s), str(o), str(c), str(h), str(l_), str(v), str(v * c)])
         if result and len(result) > 1:
-            result = sorted(result, key=lambda k: int(k[0]))
+            try:
+                first_ts = int(result[0][0])
+                last_ts = int(result[-1][0])
+                if first_ts > last_ts:
+                    is_descending = all(int(result[i][0]) >= int(result[i + 1][0]) for i in range(len(result) - 1))
+                    if is_descending:
+                        result = list(reversed(result))
+                    else:
+                        result = sorted(result, key=lambda k: int(k[0]))
+                elif first_ts == last_ts or not all(
+                    int(result[i][0]) <= int(result[i + 1][0]) for i in range(len(result) - 1)
+                ):
+                    result = sorted(result, key=lambda k: int(k[0]))
+            except Exception:
+                result = sorted(result, key=lambda k: int(k[0]))
         self._kline_cache[cache_key] = (result, now)
         return result
 

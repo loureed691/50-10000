@@ -168,6 +168,10 @@ class RiskManager:
         if info.size == 0:
             self.positions.pop(symbol, None)
         else:
+            # Preserve existing stop_price when incoming stop_price is None
+            existing = self.positions.get(symbol)
+            if existing is not None and info.stop_price is None and existing.stop_price is not None:
+                info.stop_price = existing.stop_price
             self.positions[symbol] = info
 
     def update_equity(self, equity: float) -> None:
