@@ -23,7 +23,6 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Optional
 
 from aiohttp import web
 
@@ -75,8 +74,8 @@ async def _handle_metrics(request: web.Request) -> web.Response:
 
 
 async def start_metrics_server(
-    host: Optional[str] = None,
-    port: Optional[int] = None,
+    host: str | None = None,
+    port: int | None = None,
 ) -> web.AppRunner:
     """Create and start the metrics HTTP server.
 
