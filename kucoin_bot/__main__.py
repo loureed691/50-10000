@@ -403,17 +403,37 @@ async def run_live(cfg: BotConfig) -> None:
                 # Collect signals for all symbols first so portfolio allocation
                 # can normalise weights across the whole universe.
                 all_signals: dict[str, SignalScores] = {}
-                for sym in symbols_to_process:
+
+                # Fetch klines in parallel with bounded concurrency
+                max_conc = int(os.getenv("MAX_KLINE_CONCURRENCY", "8"))
+                sem = asyncio.Semaphore(max_conc)
+
+                async def _fetch_klines(s: str) -> tuple[str, list]:
+                    async with sem:
+                        return s, await market_data.get_klines(s, kline_type=cfg.kline_type)
+
+                kline_results = await asyncio.gather(
+                    *(_fetch_klines(s) for s in symbols_to_process),
+                    return_exceptions=True,
+                )
+
+                for item in kline_results:
+                    if isinstance(item, Exception):
+                        logger.error("Error fetching klines: %s", item, exc_info=False)
+                        continue
+                    sym_k, kl = item
                     try:
-                        klines = await market_data.get_klines(sym, kline_type=cfg.kline_type)
-                        if len(klines) < signal_engine.lookback:
+                        if len(kl) < signal_engine.lookback:
                             continue
-                        all_signals[sym] = signal_engine.compute(sym, klines)
+                        all_signals[sym_k] = signal_engine.compute(sym_k, kl)
                     except Exception:
-                        logger.error("Error fetching signals for %s", sym, exc_info=True)
+                        logger.error("Error computing signals for %s", sym_k, exc_info=True)
 
                 # Compute portfolio allocations across all symbols at once
                 batch_allocs = portfolio_mgr.compute_allocations(all_signals, list(all_signals.keys()))
+
+                batch_db_enabled = os.getenv("BATCH_DB_WRITES", "1") != "0"
+                _snapshots: list = []
 
                 for sym in symbols_to_process:
                     if sym not in all_signals:
@@ -474,19 +494,17 @@ async def run_live(cfg: BotConfig) -> None:
                             market.last_price if market else 0,
                         )
 
-                        # Log decision
-                        with db_session_factory() as session:
-                            session.add(
-                                SignalSnapshot(
-                                    symbol=sym,
-                                    regime=signals.regime.value,
-                                    strategy_name=alloc.strategy,
-                                    signal_data=json.dumps(signals.to_dict()),
-                                    decision=decision.action,
-                                    reason=decision.reason,
-                                )
+                        # Collect snapshot for batched DB write
+                        _snapshots.append(
+                            SignalSnapshot(
+                                symbol=sym,
+                                regime=signals.regime.value,
+                                strategy_name=alloc.strategy,
+                                signal_data=json.dumps(signals.to_dict()),
+                                decision=decision.action,
+                                reason=decision.reason,
                             )
-                            session.commit()
+                        )
 
                         # Side selector: validate proposed side (squeeze filter, feasibility)
                         if decision.action.startswith("entry_") and not pos:
@@ -584,7 +602,9 @@ async def run_live(cfg: BotConfig) -> None:
                                     # No real API call is made – paper mode only.
                                     last_px = market.last_price if market else 0
                                     slip_dir = 1 if side == "buy" else -1
-                                    fill_px = last_px * (1 + slip_dir * DEFAULT_SLIPPAGE_BPS / 10_000) if last_px > 0 else 0
+                                    fill_px = (
+                                        last_px * (1 + slip_dir * DEFAULT_SLIPPAGE_BPS / 10_000) if last_px > 0 else 0
+                                    )
                                     if fill_px > 0:
                                         filled_qty = trade_notional * alloc.max_leverage / fill_px
                                         paper_fee = filled_qty * fill_px * DEFAULT_TAKER_FEE
@@ -614,6 +634,7 @@ async def run_live(cfg: BotConfig) -> None:
                                                 entry_price=result.avg_price,
                                                 current_price=result.avg_price,
                                                 leverage=alloc.max_leverage,
+                                                stop_price=getattr(decision, "stop_price", None),
                                             ),
                                         )
                                         last_entry_slow[sym] = slow_cycle
@@ -661,6 +682,7 @@ async def run_live(cfg: BotConfig) -> None:
                                                 current_price=result.avg_price,
                                                 leverage=alloc.max_leverage,
                                                 account_type=acct,
+                                                stop_price=getattr(decision, "stop_price", None),
                                             ),
                                         )
                                         last_entry_slow[sym] = slow_cycle
@@ -705,7 +727,8 @@ async def run_live(cfg: BotConfig) -> None:
                                             symbol=sym,
                                             side=side,
                                             notional=abs(
-                                                pos.size * (pos.current_price if pos.current_price > 0 else pos.entry_price)
+                                                pos.size
+                                                * (pos.current_price if pos.current_price > 0 else pos.entry_price)
                                             ),
                                             order_type=decision.order_type,
                                             reason=decision.reason,
@@ -728,7 +751,9 @@ async def run_live(cfg: BotConfig) -> None:
                                         )
                                         # Estimate exit fee from fill to track net expectancy
                                         trade_cost = (
-                                            pos.size * result.avg_price * DEFAULT_TAKER_FEE if result.avg_price > 0 else 0.0
+                                            pos.size * result.avg_price * DEFAULT_TAKER_FEE
+                                            if result.avg_price > 0
+                                            else 0.0
                                         )
                                         strategy_monitor.record_trade(alloc.strategy, pnl, trade_cost)
                                         # Transfer proceeds back from futures account
@@ -742,8 +767,32 @@ async def run_live(cfg: BotConfig) -> None:
                                                 exit_value,
                                             )
 
+                        # HOLD path: update stop_price if strategy provides a new one
+                        elif decision.action == "hold" and pos:
+                            new_stop = getattr(decision, "stop_price", None)
+                            if new_stop is not None:
+                                pos.stop_price = new_stop
+                                logger.debug(
+                                    "Updated stop_price for %s to %.4f",
+                                    sym,
+                                    new_stop,
+                                )
+
                     except Exception:
                         logger.error("Error processing %s", sym, exc_info=True)
+
+                # Flush signal snapshots to DB
+                if _snapshots:
+                    try:
+                        with db_session_factory() as db_sess:
+                            for snap in _snapshots:
+                                db_sess.add(snap)
+                                if not batch_db_enabled:
+                                    db_sess.commit()
+                            if batch_db_enabled:
+                                db_sess.commit()
+                    except Exception:
+                        logger.exception("Failed to write signal snapshots to DB")
 
             # Dashboard
             if cycle % dashboard_interval == 0:

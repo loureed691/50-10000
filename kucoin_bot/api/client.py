@@ -25,9 +25,6 @@ _RATE_LIMIT_MAX = 30
 # Default timeout for HTTP requests
 _DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10)
 
-# HTTP status codes that should never be retried
-_NON_RETRYABLE_STATUSES = frozenset({400, 401, 403, 404, 405})
-
 
 class KuCoinAPIError(Exception):
     """Raised on non-2xx responses from KuCoin API."""
@@ -190,27 +187,31 @@ class KuCoinClient:
                         data = {"code": "parse_error", "msg": text[:500]}
 
                     if resp.status == 429:
-                        wait = (2**attempt) + random.random()
-                        logger.warning("Rate-limited (429), backing off %.1fs", wait)
+                        retry_after = resp.headers.get("Retry-After")
+                        if retry_after:
+                            try:
+                                wait = float(retry_after)
+                            except (ValueError, TypeError):
+                                wait = (2**attempt) + random.random()
+                        else:
+                            wait = (2**attempt) + random.random()
+                        logger.warning("Rate-limited (429), backing off %.1fs (attempt %d)", wait, attempt)
                         await asyncio.sleep(wait)
                         continue
 
-                    if resp.status in _NON_RETRYABLE_STATUSES:
-                        logger.error("HTTP %d (non-retryable): %s", resp.status, data)
-                        raise KuCoinAPIError(
-                            status=resp.status,
-                            code=str(data.get("code", resp.status)),
-                            message=str(data.get("msg", text[:200])),
-                            body=data,
-                        )
-
-                    if resp.status >= 500:
+                    if 500 <= resp.status <= 599:
                         logger.warning("HTTP %d (attempt %d): %s", resp.status, attempt, data)
                         await asyncio.sleep(1 + attempt)
                         continue
 
                     if resp.status >= 400:
-                        logger.error("HTTP %d: %s", resp.status, data)
+                        logger.error("HTTP %d (non-retryable): %s", resp.status, data)
+                        raise KuCoinAPIError(
+                            status=resp.status,
+                            code=str(data.get("code", resp.status)),
+                            message=str(data.get("msg", text[:200]))[:200],
+                            body=data,
+                        )
 
                     return data
 
@@ -221,7 +222,11 @@ class KuCoinClient:
                 if attempt < 2:
                     await asyncio.sleep(1 + attempt)
 
-        return {"code": "error", "msg": "max retries exceeded"}
+        raise KuCoinAPIError(
+            status=0,
+            code="max_retries",
+            message="max retries exceeded",
+        )
 
     # ------------------------------------------------------------------
     # Spot market endpoints
