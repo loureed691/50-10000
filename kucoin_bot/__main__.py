@@ -621,15 +621,20 @@ async def run_live(cfg: BotConfig) -> None:
                                     # Transfer funds if trading on a futures market
                                     mkt_type_entry = market.market_type if market else "spot"
                                     if mkt_type_entry == "futures" and cfg.allow_internal_transfers:
+                                        # Add 5 % buffer so the futures wallet covers exchange
+                                        # fees and initial-margin rounding after the transfer.
+                                        xfer_amount = trade_notional * 1.05
                                         xfer = await portfolio_mgr.transfer_if_needed(
                                             "USDT",
                                             "trade",
                                             "futures",
-                                            trade_notional,
+                                            xfer_amount,
                                         )
                                         if xfer is None:
                                             logger.warning("Futures transfer failed for %s, skipping entry", sym)
                                             continue
+                                        # Brief pause to let the balance propagate on the exchange.
+                                        await asyncio.sleep(0.5)
 
                                     result = await exec_engine.execute(
                                         OrderRequest(

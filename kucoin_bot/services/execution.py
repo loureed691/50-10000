@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 # Maximum time (seconds) to poll an order before timing out
 _ORDER_POLL_TIMEOUT = 120
 _ORDER_POLL_INTERVAL = 2
+_RETRY_BASE_DELAY = 0.5  # seconds – base delay between order retries
+_BALANCE_RETRY_DELAY = 1.5  # seconds – extra delay for balance-related rejections
 
 
 def _quantize(value: float, increment: float, rounding: str = ROUND_DOWN) -> float:
@@ -204,8 +206,15 @@ class ExecutionEngine:
                 else:
                     msg = result.get("msg", str(result))
                     logger.warning("Order rejected (attempt %d): %s", attempt, msg)
+                    # Back-off before next retry; longer for balance-related errors
+                    # so that a recently-completed internal transfer can propagate.
+                    if "insufficient balance" in msg.lower():
+                        await asyncio.sleep(_BALANCE_RETRY_DELAY * (attempt + 1))
+                    else:
+                        await asyncio.sleep(_RETRY_BASE_DELAY * (attempt + 1))
             except Exception as exc:
                 logger.error("Order error (attempt %d): %s", attempt, exc)
+                await asyncio.sleep(_RETRY_BASE_DELAY * (attempt + 1))
 
         return OrderResult(success=False, message="max_retries_exceeded")
 
