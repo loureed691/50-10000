@@ -208,8 +208,8 @@ class PortfolioManager:
         poll_interval: float = 1.0,
     ) -> bool:
         """Poll the futures account until *min_available* is reached or *timeout* expires."""
-        deadline = asyncio.get_event_loop().time() + timeout
-        while asyncio.get_event_loop().time() < deadline:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
             try:
                 overview = await self.client.get_futures_account_overview(currency=currency)
                 available = float(overview.get("availableBalance", 0))

@@ -340,6 +340,8 @@ class KuCoinClient:
     # Internal transfer
     # ------------------------------------------------------------------
 
+    _ACCOUNT_ALIASES: Dict[str, str] = {"futures": "contract"}
+
     @staticmethod
     def normalize_account_type(account: str) -> str:
         """Normalize user-facing account names to KuCoin API values.
@@ -347,8 +349,7 @@ class KuCoinClient:
         The KuCoin inner-transfer endpoint uses ``"contract"`` for the futures
         account, not ``"futures"``.
         """
-        _ACCOUNT_ALIASES: Dict[str, str] = {"futures": "contract"}
-        return _ACCOUNT_ALIASES.get(account, account)
+        return KuCoinClient._ACCOUNT_ALIASES.get(account, account)
 
     async def inner_transfer(
         self,
